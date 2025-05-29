@@ -421,7 +421,7 @@ def delegation_chain_caveats_example():
 
     # Root capability with time-based caveat
     expiry = datetime.utcnow() + timedelta(days=30)
-    console.print(f"\n[bold]STEP 1:[/bold] Creating root capability with 30-day expiry")
+    console.print("\n[bold]STEP 1:[/bold] Creating root capability with 30-day expiry")
     simulate_processing(console, "Creating root capability...", 0.8)
 
     root = create_capability(

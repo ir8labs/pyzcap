@@ -1,0 +1,30 @@
+[project]
+name = "pyzcap"
+version = "0.1.0"
+description = "A pure Python implementation of ZCAP-LD (Authorization Capabilities for Linked Data)"
+authors = [
+    {name = "Luke Hinds", email = "luke@ir8.ai"},
+]
+dependencies = [
+    "pyld>=2.0.0",
+    "cryptography>=45.0.0",
+    "pydantic>=2.0.0"
+]
+requires-python = ">=3.10"
+readme = "README.md"
+license = {text = "Apache License 2.0"}
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --cov=pyzcap"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+] 

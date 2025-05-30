@@ -16,6 +16,7 @@ automatically expired after a configurable time period (default: 1 hour).
 from datetime import datetime
 from typing import List, Optional, Dict, Any, Set
 from uuid import uuid4
+import base58
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.exceptions import InvalidSignature
 from pyld import jsonld
@@ -49,17 +50,21 @@ def _sign_capability(
 
     # Sign the normalized document
     signature = private_key.sign(normalized.encode("utf-8"))
-    return signature.hex()
+    return "z" + base58.b58encode(signature).decode("utf-8")
 
 
-def _verify_signature(
-    signature: str, message: str, public_key: ed25519.Ed25519PublicKey
-) -> bool:
-    """Verify a signature using an Ed25519 public key."""
+def _verify_signature(signature: str, message: str, public_key: ed25519.Ed25519PublicKey) -> bool:
     try:
-        public_key.verify(bytes.fromhex(signature), message.encode("utf-8"))
+        if signature.startswith("z"):
+            signature_bytes = base58.b58decode(signature[1:])
+        else:
+            signature_bytes = bytes.fromhex(signature)
+        public_key.verify(signature_bytes, message.encode("utf-8"))
         return True
     except InvalidSignature:
+        return False
+    except Exception as e:
+        print(f"Verification error: {e}")
         return False
 
 
@@ -403,10 +408,11 @@ def invoke_capability(
     )
 
     # Sign the normalized document
-    proof_value = invoker_key.sign(normalized.encode("utf-8")).hex()
+    signature = invoker_key.sign(normalized.encode("utf-8"))
+    proof_value = base58.b58encode(signature).decode("utf-8")
 
-    # Add the proofValue to the proof
-    invocation_doc["proof"]["proofValue"] = proof_value
+    # Add the proofValue back to the proof
+    invocation_doc["proof"]["proofValue"] = f"z{proof_value}"
 
     # Return the signed invocation document
     return invocation_doc

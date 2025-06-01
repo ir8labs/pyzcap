@@ -10,17 +10,12 @@ from zcap import (
     delegate_capability,
     invoke_capability,
     verify_capability,
-    # revoke_capability,
-    # register_public_key,
-    models,
     verify_invocation,
-    ZCAPException,
+    CapabilityVerificationError,
     DelegationError,
     InvocationError,
-    CapabilityVerificationError,
-    DIDKeyNotFoundError,
-    CapabilityNotFoundError,
-    InvocationVerificationError
+    InvocationVerificationError,
+    models,
 )
 
 

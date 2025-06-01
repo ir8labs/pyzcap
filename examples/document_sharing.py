@@ -11,7 +11,7 @@ This example simulates a document sharing system where:
 
 import time
 from datetime import datetime, timedelta
-from typing import Any, Dict, Set
+from typing import Dict, Set
 
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from rich.console import Console
@@ -26,12 +26,10 @@ from zcap import (
     DelegationError,
     DIDKeyNotFoundError,
     InvocationError,
-    InvocationVerificationError,
     ZCAPException,
     create_capability,
     delegate_capability,
     invoke_capability,
-    verify_capability,
 )
 from zcap.models import Capability
 
@@ -155,9 +153,10 @@ def main():
         transient=True,
     ) as progress:
         task = progress.add_task("Generating keys...", total=3)
-        alice_key = ed25519.Ed25519PrivateKey.generate(); progress.update(task, advance=1)
-        bob_key = ed25519.Ed25519PrivateKey.generate(); progress.update(task, advance=1)
-        charlie_key = ed25519.Ed25519PrivateKey.generate(); progress.update(task, advance=1)
+        alice_key = ed25519.Ed25519PrivateKey.generate()
+        bob_key = ed25519.Ed25519PrivateKey.generate()
+        charlie_key = ed25519.Ed25519PrivateKey.generate()
+        progress.update(task, advance=3)
 
     # Display actors
     actors_table = Table(title="Actors")
@@ -215,7 +214,8 @@ def main():
         capability_store[bob_capability.id] = bob_capability
         console.print(f"[green]✓[/green] Capability for Bob created: {bob_capability.id}\n")
     except ZCAPException as e:
-        console.print(f"[red]✗[/red] Failed to create Bob's capability: {e}"); return
+        console.print(f"[red]✗[/red] Failed to create Bob's capability: {e}")
+        return
 
     # Bob reads the document
     console.print("[bold]STEP 4:[/bold] Bob reads the document")
@@ -267,7 +267,8 @@ def main():
             capability_store[charlie_capability.id] = charlie_capability
             console.print(f"[green]✓[/green] Capability for Charlie created: {charlie_capability.id}\n")
         except (DelegationError, CapabilityVerificationError, ZCAPException) as e:
-            console.print(f"[red]✗[/red] Failed to delegate to Charlie: {e}"); charlie_capability = None
+            console.print(f"[red]✗[/red] Failed to delegate to Charlie: {e}")
+            charlie_capability = None
 
     console.print("[bold]STEP 7:[/bold] Charlie attempts to read the document")
     simulate_processing(console, "Charlie invoking read capability...")

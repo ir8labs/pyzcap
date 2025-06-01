@@ -10,15 +10,8 @@ from zcap.capability import (
     delegate_capability,
     invoke_capability,
     verify_capability,
-    evaluate_caveat,
-    ZCAPException,
-    CaveatEvaluationError,
     CapabilityVerificationError,
-    InvocationVerificationError,
     InvocationError,
-    DelegationError,
-    DIDKeyNotFoundError,
-    CapabilityNotFoundError,
 )
 from zcap.models import Capability
 

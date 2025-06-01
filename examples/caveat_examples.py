@@ -4,22 +4,24 @@ Examples demonstrating the use of different ZCAP-LD caveat types.
 
 import time
 from datetime import datetime, timedelta
+
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
+
 from zcap.capability import (
+    CapabilityVerificationError,
+    InvocationError,
+    ZCAPException,
     create_capability,
     delegate_capability,
     invoke_capability,
     verify_capability,
-    register_public_key,
-    revoke_capability,
 )
 
 
-def simulate_processing(console, message, duration=1.0):
+def simulate_processing(console, message, duration=0.3):
     """Simulate processing with a spinner animation."""
     with Progress(
         SpinnerColumn(),
@@ -32,534 +34,398 @@ def simulate_processing(console, message, duration=1.0):
 
 
 def setup_environment(console):
-    """Set up keys and identities for the examples."""
-    # Generate keys for different parties
+    """Set up keys, DIDs, and client-side stores for the examples."""
     console.print("[bold]Setting up test environment[/bold]")
-    simulate_processing(console, "Generating cryptographic keys...", 0.8)
+    simulate_processing(console, "Generating cryptographic keys...")
 
     service_key = ed25519.Ed25519PrivateKey.generate()
     admin_key = ed25519.Ed25519PrivateKey.generate()
     user_key = ed25519.Ed25519PrivateKey.generate()
+    guest_key = ed25519.Ed25519PrivateKey.generate() # For delegation chain example
 
-    # Register the public keys
-    simulate_processing(console, "Registering identities...", 0.5)
-    register_public_key("did:example:service", service_key.public_key())
-    register_public_key("did:example:admin", admin_key.public_key())
-    register_public_key("did:example:user", user_key.public_key())
+    # Initialize client-side stores
+    did_key_store = {
+        "did:example:service": service_key.public_key(),
+        "did:example:admin": admin_key.public_key(),
+        "did:example:user": user_key.public_key(),
+        "did:example:guest": guest_key.public_key(),
+    }
+    capability_store = {}
+    revoked_capabilities = set()
+    used_invocation_nonces = set()
+    nonce_timestamps = {}
 
-    console.print("[green]✓[/green] Environment setup complete")
-
-    return service_key, admin_key, user_key
+    console.print("[green]✓[/green] Environment (keys & stores) setup complete")
+    return service_key, admin_key, user_key, guest_key, did_key_store, capability_store, revoked_capabilities, used_invocation_nonces, nonce_timestamps
 
 
 def time_based_caveats_example():
     """Demonstrate time-based caveats."""
     console = Console()
+    console.print(Panel.fit("[bold cyan]Time-based Caveats Example[/bold cyan]", border_style="cyan", padding=(1, 2)))
+    service_key, admin_key, _, _, did_key_store, capability_store, revoked_caps, nonces, nonce_ts = setup_environment(console)
 
-    console.print(Panel.fit(
-        "[bold cyan]Time-based Caveats Example[/bold cyan]",
-        border_style="cyan",
-        padding=(1, 2)
-    ))
+    target = {"id": "https://example.com/api/resource/time_locked", "type": "ApiResource"}
+    expiry_time = datetime.utcnow() + timedelta(seconds=3) # Short expiry for demo
+    future_start_time = datetime.utcnow() + timedelta(hours=1) # For ValidAfter
 
-    service_key, admin_key, user_key = setup_environment(console)
+    console.print(f"\n[bold]STEP 1:[/bold] Creating capability valid until: [green]{expiry_time.isoformat()}[/green]")
+    try:
+        cap_valid_until = create_capability(
+            controller_did="did:example:service", invoker_did="did:example:admin",
+            actions=[{"name": "read"}], target_info=target, controller_key=service_key,
+            caveats=[{"type": "ValidUntil", "date": expiry_time.isoformat()}]
+        )
+        capability_store[cap_valid_until.id] = cap_valid_until
+        console.print(f"[green]✓[/green] Capability {cap_valid_until.id} created.")
+    except ZCAPException as e:
+        console.print(f"[red]✗[/red] Creation failed: {e}")
+        return
 
-    # Create a resource target
-    target = {"id": "https://example.com/api/resource/123", "type": "ApiResource"}
+    console.print("\n[bold]STEP 2:[/bold] Verifying capability (should be valid now)")
+    try:
+        verify_capability(cap_valid_until, did_key_store, revoked_caps, capability_store)
+        console.print("[green]✓[/green] Verification: [bold green]Valid[/bold green] (as expected)")
+    except CapabilityVerificationError as e:
+        console.print(f"[red]✗[/red] Verification failed: {e}")
 
-    # Create a capability with time-based caveats
-    # This capability is valid for 24 hours
-    expiry = datetime.utcnow() + timedelta(hours=24)
+    console.print("\n[bold]STEP 3:[/bold] Invoking capability (should succeed now)")
+    try:
+        invocation = invoke_capability(cap_valid_until, "read", admin_key, did_key_store, revoked_caps, capability_store, nonces, nonce_ts)
+        console.print(f"[green]✓[/green] Invocation successful. ID: {invocation['id']}")
+    except InvocationError as e:
+        console.print(f"[red]✗[/red] Invocation failed: {e}")
 
-    console.print(f"\n[bold]STEP 1:[/bold] Creating capability valid until: [green]{expiry.isoformat()}[/green]")
-    simulate_processing(console, "Creating capability with expiry...", 0.8)
+    console.print(f"\n[bold]STEP 4:[/bold] Waiting for capability to expire (approx {expiry_time - datetime.utcnow()})...")
+    time.sleep(max(0, (expiry_time - datetime.utcnow()).total_seconds() + 0.5)) # Wait past expiry
 
-    capability = create_capability(
-        controller="did:example:service",
-        invoker="did:example:admin",
-        actions=[
-            {"name": "read", "parameters": {}},
-            {"name": "write", "parameters": {}},
-        ],
-        target=target,
-        controller_key=service_key,
-        caveats=[{"type": "ValidUntil", "date": expiry.isoformat()}],
-    )
+    console.print("\n[bold]STEP 5:[/bold] Verifying capability (should be expired)")
+    try:
+        verify_capability(cap_valid_until, did_key_store, revoked_caps, capability_store)
+        console.print("[red]![/red] Verification: [bold green]Valid[/bold green] (UNEXPECTED, should be expired)")
+    except CapabilityVerificationError as e:
+        console.print(f"[green]✓[/green] Verification failed as expected: {e}")
 
-    # Verify the capability is currently valid
-    console.print("\n[bold]STEP 2:[/bold] Verifying capability is currently valid")
-    simulate_processing(console, "Verifying capability...", 0.8)
+    console.print("\n[bold]STEP 6:[/bold] Invoking capability (should fail due to expiry)")
+    try:
+        invoke_capability(cap_valid_until, "read", admin_key, did_key_store, revoked_caps, capability_store, nonces, nonce_ts)
+        console.print("[red]![/red] Invocation successful (UNEXPECTED, should be expired)")
+    except InvocationError as e:
+        console.print(f"[green]✓[/green] Invocation failed as expected: {e}")
 
-    is_valid = verify_capability(capability)
+    console.print(f"\n[bold]STEP 7:[/bold] Creating capability valid after: [green]{future_start_time.isoformat()}[/green]")
+    try:
+        cap_valid_after = create_capability(
+            controller_did="did:example:service", invoker_did="did:example:admin",
+            actions=[{"name": "access"}], target_info=target, controller_key=service_key,
+            caveats=[{"type": "ValidAfter", "date": future_start_time.isoformat()}]
+        )
+        capability_store[cap_valid_after.id] = cap_valid_after
+        console.print(f"[green]✓[/green] Capability {cap_valid_after.id} created.")
+    except ZCAPException as e:
+        console.print(f"[red]✗[/red] Creation failed: {e}")
+        return
 
-    if is_valid:
-        console.print("[green]✓[/green] Capability valid now? [bold green]Yes[/bold green]")
-    else:
-        console.print("[red]✗[/red] Capability valid now? [bold red]No[/bold red]")
-
-    # Try to invoke the capability
-    console.print("\n[bold]STEP 3:[/bold] Invoking capability")
-    simulate_processing(console, "Invoking capability...", 0.8)
-
-    invocation = invoke_capability(capability, "read", admin_key)
-
-    if invocation:
-        console.print("[green]✓[/green] Capability invocation: [bold green]Successful[/bold green]")
-
-        invoke_table = Table(title="Invocation Details")
-        invoke_table.add_column("Property", style="cyan")
-        invoke_table.add_column("Value", style="green")
-
-        invoke_table.add_row("ID", invocation['id'])
-        invoke_table.add_row("Proof Purpose", invocation['proof']['proofPurpose'])
-
-        console.print(invoke_table)
-    else:
-        console.print("[red]✗[/red] Capability invocation: [bold red]Failed[/bold red]")
-
-    # Create a capability that will be valid in the future
-    future_start = datetime.utcnow() + timedelta(hours=2)
-
-    console.print(f"\n[bold]STEP 4:[/bold] Creating capability valid after: [green]{future_start.isoformat()}[/green]")
-    simulate_processing(console, "Creating future-valid capability...", 0.8)
-
-    future_capability = create_capability(
-        controller="did:example:service",
-        invoker="did:example:admin",
-        actions=[{"name": "read", "parameters": {}}],
-        target=target,
-        controller_key=service_key,
-        caveats=[{"type": "ValidAfter", "date": future_start.isoformat()}],
-    )
-
-    # Verify the capability (should fail as it's not valid yet)
-    console.print("\n[bold]STEP 5:[/bold] Verifying future capability")
-    simulate_processing(console, "Verifying future capability...", 0.8)
-
-    is_valid = verify_capability(future_capability)
-
-    if is_valid:
-        console.print("[red]![/red] Future capability valid now? [bold green]Yes[/bold green] (unexpected)")
-    else:
-        console.print("[green]✓[/green] Future capability valid now? [bold red]No[/bold red] (as expected)")
+    console.print("\n[bold]STEP 8:[/bold] Verifying 'ValidAfter' capability (should not be valid yet)")
+    try:
+        verify_capability(cap_valid_after, did_key_store, revoked_caps, capability_store)
+        console.print("[red]![/red] Verification: [bold green]Valid[/bold green] (UNEXPECTED, not active yet)")
+    except CapabilityVerificationError as e:
+        console.print(f"[green]✓[/green] Verification failed as expected: {e}")
+    console.print("--- Time-based Caveats Example Complete ---\n")
 
 
 def action_restriction_caveats_example():
     """Demonstrate action restriction caveats."""
     console = Console()
+    console.print(Panel.fit("[bold cyan]Action Restriction Caveats Example[/bold cyan]", border_style="cyan", padding=(1, 2)))
+    service_key, admin_key, user_key, _, did_key_store, capability_store, revoked_caps, nonces, nonce_ts = setup_environment(console)
 
-    console.print(Panel.fit(
-        "[bold cyan]Action Restriction Caveats Example[/bold cyan]",
-        border_style="cyan",
-        padding=(1, 2)
-    ))
-
-    service_key, admin_key, user_key = setup_environment(console)
-
-    # Create a resource target
     target = {"id": "https://example.com/documents/report.pdf", "type": "Document"}
 
-    # Create a capability with all actions
-    console.print("\n[bold]STEP 1:[/bold] Creating root capability with all actions")
-    simulate_processing(console, "Creating root capability...", 0.8)
+    console.print("\n[bold]STEP 1:[/bold] Creating root capability with actions: read, write, delete")
+    try:
+        root_cap = create_capability(
+            controller_did="did:example:service", invoker_did="did:example:admin",
+            actions=[{"name": "read"}, {"name": "write"}, {"name": "delete"}],
+            target_info=target, controller_key=service_key
+        )
+        capability_store[root_cap.id] = root_cap
+        console.print(f"[green]✓[/green] Root capability {root_cap.id} created.")
+    except ZCAPException as e:
+        console.print(f"[red]✗[/red] Creation failed: {e}")
+        return
 
-    capability = create_capability(
-        controller="did:example:service",
-        invoker="did:example:admin",
-        actions=[
-            {"name": "read", "parameters": {}},
-            {"name": "write", "parameters": {}},
-            {"name": "delete", "parameters": {}},
-        ],
-        target=target,
-        controller_key=service_key,
-    )
+    console.print("\n[bold]STEP 2:[/bold] Delegating to user with caveat: AllowedAction: [read]")
+    try:
+        delegated_cap = delegate_capability(
+            parent_capability=root_cap, delegator_key=admin_key, new_invoker_did="did:example:user",
+            # Actions are inherited if not specified, caveat will restrict invocation.
+            # To explicitly narrow actions at delegation time (good practice):
+            # actions=[{"name": "read"}],
+            caveats=[{"type": "AllowedAction", "actions": ["read"]}],
+            did_key_store=did_key_store, revoked_capabilities=revoked_caps, capability_store=capability_store
+        )
+        capability_store[delegated_cap.id] = delegated_cap
+        console.print(f"[green]✓[/green] Delegated capability {delegated_cap.id} created.")
+    except ZCAPException as e:
+        console.print(f"[red]✗[/red] Delegation failed: {e}")
+        return
 
-    cap_table = Table(title="Root Capability")
-    cap_table.add_column("Property", style="cyan")
-    cap_table.add_column("Value", style="green")
+    console.print("\n[bold]STEP 3:[/bold] User invokes with allowed 'read' action")
+    try:
+        invoke_capability(delegated_cap, "read", user_key, did_key_store, revoked_caps, capability_store, nonces, nonce_ts)
+        console.print("[green]✓[/green] 'read' invocation: [bold green]Successful[/bold green]")
+    except InvocationError as e:
+        console.print(f"[red]✗[/red] 'read' invocation failed: {e}")
 
-    cap_table.add_row("Controller", "did:example:service")
-    cap_table.add_row("Invoker", "did:example:admin")
-    cap_table.add_row("Actions", "read, write, delete")
-
-    console.print(cap_table)
-
-    # Delegate to a user with restricted actions
-    console.print("\n[bold]STEP 2:[/bold] Delegating capability with restricted actions (read-only)")
-    simulate_processing(console, "Creating delegated capability...", 0.8)
-
-    delegated = delegate_capability(
-        parent_capability=capability,
-        delegator_key=admin_key,
-        new_invoker="did:example:user",
-        caveats=[{"type": "AllowedAction", "actions": ["read"]}],
-    )
-
-    del_cap_table = Table(title="Delegated Capability")
-    del_cap_table.add_column("Property", style="cyan")
-    del_cap_table.add_column("Value", style="green")
-
-    del_cap_table.add_row("Controller", "did:example:admin")
-    del_cap_table.add_row("Invoker", "did:example:user")
-    del_cap_table.add_row("Actions", "read")
-    del_cap_table.add_row("Caveats", "AllowedAction: [read]")
-
-    console.print(del_cap_table)
-
-    # Try to invoke with allowed action
-    console.print("\n[bold]STEP 3:[/bold] User tries to invoke with allowed 'read' action")
-    simulate_processing(console, "Invoking with 'read' action...", 0.8)
-
-    read_invocation = invoke_capability(delegated, "read", user_key)
-
-    if read_invocation:
-        console.print("[green]✓[/green] Read action invocation: [bold green]Successful[/bold green]")
-    else:
-        console.print("[red]✗[/red] Read action invocation: [bold red]Failed[/bold red]")
-
-    # Try to invoke with prohibited action
-    console.print("\n[bold]STEP 4:[/bold] User tries to invoke with prohibited 'write' action")
-    simulate_processing(console, "Invoking with 'write' action...", 0.8)
-
-    write_invocation = invoke_capability(delegated, "write", user_key)
-
-    if write_invocation:
-        console.print("[red]![/red] Write action invocation: [bold green]Successful[/bold green] (unexpected)")
-    else:
-        console.print("[green]✓[/green] Write action invocation: [bold red]Failed[/bold red] (as expected)")
+    console.print("\n[bold]STEP 4:[/bold] User invokes with disallowed 'write' action")
+    try:
+        invoke_capability(delegated_cap, "write", user_key, did_key_store, revoked_caps, capability_store, nonces, nonce_ts)
+        console.print("[red]![/red] 'write' invocation: [bold green]Successful[/bold green] (UNEXPECTED)")
+    except InvocationError as e:
+        console.print(f"[green]✓[/green] 'write' invocation failed as expected: {e}")
+    console.print("--- Action Restriction Caveats Example Complete ---\n")
 
 
 def parameter_restriction_example():
     """Demonstrate parameter restriction caveats."""
     console = Console()
+    console.print(Panel.fit("[bold cyan]Parameter Restriction Caveats Example[/bold cyan]", border_style="cyan", padding=(1, 2)))
+    service_key, admin_key, user_key, _, did_key_store, capability_store, revoked_caps, nonces, nonce_ts = setup_environment(console)
+    target = {"id": "https://example.com/api/data/items", "type": "ApiEndpoint"}
 
-    console.print(Panel.fit(
-        "[bold cyan]Parameter Restriction Caveats Example[/bold cyan]",
-        border_style="cyan",
-        padding=(1, 2)
-    ))
+    console.print("\n[bold]STEP 1:[/bold] Creating capability with 'update' action")
+    try:
+        root_cap = create_capability(
+            controller_did="did:example:service", invoker_did="did:example:admin",
+            actions=[{"name": "update"}], target_info=target, controller_key=service_key
+        )
+        capability_store[root_cap.id] = root_cap
+        console.print(f"[green]✓[/green] Root capability {root_cap.id} created for 'update' action.")
+    except ZCAPException as e:
+        console.print(f"[red]✗[/red] Creation failed: {e}")
+        return
 
-    service_key, admin_key, user_key = setup_environment(console)
+    console.print("\n[bold]STEP 2:[/bold] Delegating with caveat: RequireParameter: {parameter: 'itemId', value: 'item-42'}")
+    try:
+        delegated_cap = delegate_capability(
+            parent_capability=root_cap, delegator_key=admin_key, new_invoker_did="did:example:user",
+            caveats=[{"type": "RequireParameter", "parameter": "itemId", "value": "item-42"}],
+            did_key_store=did_key_store, revoked_capabilities=revoked_caps, capability_store=capability_store
+        )
+        capability_store[delegated_cap.id] = delegated_cap
+        console.print(f"[green]✓[/green] Delegated capability {delegated_cap.id} created.")
+    except ZCAPException as e:
+        console.print(f"[red]✗[/red] Delegation failed: {e}")
+        return
 
-    # Create a resource target
-    target = {"id": "https://example.com/api/data", "type": "ApiEndpoint"}
+    console.print("\n[bold]STEP 3:[/bold] User invokes 'update' with correct parameter: {itemId: 'item-42'}")
+    try:
+        invoke_capability(delegated_cap, "update", user_key, did_key_store, revoked_caps, capability_store, nonces, nonce_ts, parameters={"itemId": "item-42", "data": "new_value"})
+        console.print("[green]✓[/green] Invocation with correct param: [bold green]Successful[/bold green]")
+    except InvocationError as e:
+        console.print(f"[red]✗[/red] Invocation with correct param failed: {e}")
 
-    # Create a capability
-    console.print("\n[bold]STEP 1:[/bold] Creating root capability")
-    simulate_processing(console, "Creating capability...", 0.8)
+    console.print("\n[bold]STEP 4:[/bold] User invokes 'update' with incorrect parameter value: {itemId: 'item-99'}")
+    try:
+        invoke_capability(delegated_cap, "update", user_key, did_key_store, revoked_caps, capability_store, nonces, nonce_ts, parameters={"itemId": "item-99", "data": "other_value"})
+        console.print("[red]![/red] Invocation with incorrect param value: [bold green]Successful[/bold green] (UNEXPECTED)")
+    except InvocationError as e:
+        console.print(f"[green]✓[/green] Invocation with incorrect param value failed as expected: {e}")
 
-    capability = create_capability(
-        controller="did:example:service",
-        invoker="did:example:admin",
-        actions=[{"name": "query", "parameters": {"mode": "any"}}],
-        target=target,
-        controller_key=service_key,
-    )
-
-    # Delegate with parameter restrictions
-    console.print("\n[bold]STEP 2:[/bold] Delegating capability with parameter restrictions")
-    simulate_processing(console, "Creating delegated capability...", 0.8)
-
-    delegated = delegate_capability(
-        parent_capability=capability,
-        delegator_key=admin_key,
-        new_invoker="did:example:user",
-        caveats=[
-            {"type": "RequireParameter", "parameter": "mode", "value": "readonly"}
-        ],
-    )
-
-    # Try to invoke with correct parameter
-    console.print("\n[bold]STEP 3:[/bold] Invoking with correct parameter (mode=readonly)")
-    simulate_processing(console, "Invoking capability...", 0.8)
-
-    correct_params = {"mode": "readonly"}
-    success1 = invoke_capability(delegated, "query", user_key, correct_params)
-
-    if success1:
-        console.print("[green]✓[/green] Invocation with correct parameter: [bold green]Successful[/bold green]")
-        console.print(f"  Parameter value: [cyan]mode=[/cyan][green]{success1['parameters']['mode']}[/green]")
-    else:
-        console.print("[red]✗[/red] Invocation with correct parameter: [bold red]Failed[/bold red]")
-
-    # Try to invoke with wrong parameter
-    console.print("\n[bold]STEP 4:[/bold] Invoking with wrong parameter (mode=readwrite)")
-    simulate_processing(console, "Invoking capability...", 0.8)
-
-    wrong_params = {"mode": "readwrite"}
-    success2 = invoke_capability(delegated, "query", user_key, wrong_params)
-
-    if success2:
-        console.print("[red]![/red] Invocation with wrong parameter: [bold green]Successful[/bold green] (unexpected)")
-    else:
-        console.print("[green]✓[/green] Invocation with wrong parameter: [bold red]Failed[/bold red] (as expected)")
-
-    # Try to invoke with missing parameter
-    console.print("\n[bold]STEP 5:[/bold] Invoking with missing parameter")
-    simulate_processing(console, "Invoking capability...", 0.8)
-
-    success3 = invoke_capability(delegated, "query", user_key)
-
-    if success3:
-        console.print("[red]![/red] Invocation with missing parameter: [bold green]Successful[/bold green] (unexpected)")
-    else:
-        console.print("[green]✓[/green] Invocation with missing parameter: [bold red]Failed[/bold red] (as expected)")
+    console.print("\n[bold]STEP 5:[/bold] User invokes 'update' with missing required parameter")
+    try:
+        invoke_capability(delegated_cap, "update", user_key, did_key_store, revoked_caps, capability_store, nonces, nonce_ts, parameters={"data": "some_data"})
+        console.print("[red]![/red] Invocation with missing param: [bold green]Successful[/bold green] (UNEXPECTED)")
+    except InvocationError as e:
+        console.print(f"[green]✓[/green] Invocation with missing param failed as expected: {e}")
+    console.print("--- Parameter Restriction Caveats Example Complete ---\n")
 
 
-def conditional_caveat_example():
-    """Demonstrate conditional caveats (ValidWhileTrue)."""
+def conditional_caveat_example(): # ValidWhileTrue
+    """Demonstrate conditional caveats like ValidWhileTrue."""
     console = Console()
+    console.print(Panel.fit("[bold cyan]Conditional Caveat (ValidWhileTrue) Example[/bold cyan]", border_style="cyan", padding=(1, 2)))
+    service_key, admin_key, user_key, _, did_key_store, capability_store, revoked_caps, nonces, nonce_ts = setup_environment(console)
+    target = {"id": "https://example.com/features/beta_feature", "type": "ExperimentalFeature"}
+    condition_id_for_caveat = "condition:feature_enabled_globally"
 
-    console.print(Panel.fit(
-        "[bold cyan]Conditional Caveats Example[/bold cyan]",
-        border_style="cyan",
-        padding=(1, 2)
-    ))
+    console.print(f"\n[bold]STEP 1:[/bold] Creating capability with caveat: ValidWhileTrue: {{conditionId: '{condition_id_for_caveat}'}}")
+    try:
+        cap_conditional = create_capability(
+            controller_did="did:example:service", invoker_did="did:example:admin",
+            actions=[{"name": "access"}], target_info=target, controller_key=service_key,
+            caveats=[{"type": "ValidWhileTrue", "conditionId": condition_id_for_caveat}]
+        )
+        capability_store[cap_conditional.id] = cap_conditional
+        console.print(f"[green]✓[/green] Conditional capability {cap_conditional.id} created.")
+    except ZCAPException as e:
+        console.print(f"[red]✗[/red] Creation failed: {e}")
+        return
 
-    service_key, admin_key, user_key = setup_environment(console)
+    console.print("\n[bold]STEP 2:[/bold] Verifying/Invoking when condition is TRUE (not in revoked_caps)")
+    # 'revoked_caps' here acts as the store of things that make conditions FALSE
+    try:
+        verify_capability(cap_conditional, did_key_store, revoked_caps, capability_store)
+        console.print("[green]✓[/green] Verification (condition TRUE): [bold green]Valid[/bold green]")
+        invoke_capability(cap_conditional, "access", admin_key, did_key_store, revoked_caps, capability_store, nonces, nonce_ts)
+        console.print("[green]✓[/green] Invocation (condition TRUE): [bold green]Successful[/bold green]")
+    except (CapabilityVerificationError, InvocationError) as e:
+        console.print(f"[red]✗[/red] Verification/Invocation failed (condition TRUE): {e}")
 
-    # Create a resource target
-    target = {"id": "https://example.com/subscription/premium", "type": "Subscription"}
+    console.print(f"\n[bold]STEP 3:[/bold] Simulating condition becoming FALSE (add '{condition_id_for_caveat}' to revoked_caps)")
+    revoked_caps.add(condition_id_for_caveat) # Simulate the condition becoming false
+    console.print(f"[yellow]![/yellow] '{condition_id_for_caveat}' added to 'revoked_caps' set.")
 
-    # Create a condition ID for this example
-    condition_id = "condition:subscription:active"
+    console.print("\n[bold]STEP 4:[/bold] Verifying/Invoking when condition is FALSE")
+    try:
+        verify_capability(cap_conditional, did_key_store, revoked_caps, capability_store)
+        console.print("[red]![/red] Verification (condition FALSE): [bold green]Valid[/bold green] (UNEXPECTED)")
+    except CapabilityVerificationError as e:
+        console.print(f"[green]✓[/green] Verification (condition FALSE) failed as expected: {e}")
 
-    # Create a capability with ValidWhileTrue caveat
-    console.print(f"\n[bold]STEP 1:[/bold] Creating capability valid while condition '{condition_id}' is true")
-    simulate_processing(console, "Creating conditional capability...", 0.8)
-
-    capability = create_capability(
-        controller="did:example:service",
-        invoker="did:example:user",
-        actions=[{"name": "access", "parameters": {}}],
-        target=target,
-        controller_key=service_key,
-        caveats=[{"type": "ValidWhileTrue", "conditionId": condition_id}],
-    )
-
-    # Verify and invoke while condition is true
-    console.print("\n[bold]STEP 2:[/bold] Verifying capability with active condition")
-    simulate_processing(console, "Verifying capability...", 0.8)
-
-    is_valid = verify_capability(capability)
-
-    if is_valid:
-        console.print("[green]✓[/green] Capability valid with active condition? [bold green]Yes[/bold green]")
-    else:
-        console.print("[red]✗[/red] Capability valid with active condition? [bold red]No[/bold red]")
-
-    console.print("\n[bold]STEP 3:[/bold] Invoking capability with active condition")
-    simulate_processing(console, "Invoking capability...", 0.8)
-
-    invocation = invoke_capability(capability, "access", user_key)
-
-    if invocation:
-        console.print("[green]✓[/green] Invocation successful with active condition")
-
-        invoke_table = Table(title="Invocation Details")
-        invoke_table.add_column("Property", style="cyan")
-        invoke_table.add_column("Value", style="green")
-
-        invoke_table.add_row("ID", invocation['id'])
-        invoke_table.add_row("Action", invocation['action'])
-
-        console.print(invoke_table)
-    else:
-        console.print("[red]✗[/red] Invocation failed with active condition")
-
-    # Now revoke the condition (e.g., subscription ended)
-    console.print("\n[bold]STEP 4:[/bold] Revoking the condition (e.g., subscription ended)")
-    simulate_processing(console, "Revoking condition...", 0.8)
-
-    revoke_capability(condition_id)
-    console.print("[yellow]![/yellow] Condition has been [bold red]revoked[/bold red]")
-
-    # Verify and invoke after condition is false
-    console.print("\n[bold]STEP 5:[/bold] Verifying capability after condition is revoked")
-    simulate_processing(console, "Verifying capability...", 0.8)
-
-    is_valid = verify_capability(capability)
-
-    if is_valid:
-        console.print("[red]![/red] Capability valid after condition revoked? [bold green]Yes[/bold green] (unexpected)")
-    else:
-        console.print("[green]✓[/green] Capability valid after condition revoked? [bold red]No[/bold red] (as expected)")
-
-    console.print("\n[bold]STEP 6:[/bold] Invoking capability with revoked condition")
-    simulate_processing(console, "Attempting invocation...", 0.8)
-
-    invocation = invoke_capability(capability, "access", user_key)
-
-    if invocation:
-        console.print("[red]![/red] Invocation successful after condition revoked? [bold green]Yes[/bold green] (unexpected)")
-    else:
-        console.print("[green]✓[/green] Invocation failed after condition revoked (as expected)")
+    try:
+        invoke_capability(cap_conditional, "access", admin_key, did_key_store, revoked_caps, capability_store, nonces, nonce_ts)
+        console.print("[red]![/red] Invocation (condition FALSE): [bold green]Successful[/bold green] (UNEXPECTED)")
+    except InvocationError as e:
+        console.print(f"[green]✓[/green] Invocation (condition FALSE) failed as expected: {e}")
+    console.print("--- Conditional Caveat Example Complete ---\n")
 
 
 def delegation_chain_caveats_example():
-    """Demonstrate how caveats accumulate through a delegation chain."""
+    """Demonstrate how caveats accumulate and are checked in a delegation chain."""
     console = Console()
+    console.print(Panel.fit("[bold cyan]Delegation Chain Caveats Example[/bold cyan]", border_style="cyan", padding=(1, 2)))
+    service_key, admin_key, user_key, guest_key, did_key_store, capability_store, revoked_caps, nonces, nonce_ts = setup_environment(console)
+    target = {"id": "https://example.com/project/files/confidential.doc", "type": "ProjectFile"}
 
-    console.print(Panel.fit(
-        "[bold cyan]Delegation Chain Caveats Example[/bold cyan]",
-        border_style="cyan",
-        padding=(1, 2)
-    ))
+    console.print("\n[bold]STEP 1:[/bold] Service creates root capability for Admin (expires in 1 day)")
+    root_expiry = datetime.utcnow() + timedelta(days=1)
+    try:
+        root_cap = create_capability(
+            controller_did="did:example:service", invoker_did="did:example:admin",
+            actions=[{"name": "read"}, {"name": "comment"}], target_info=target, controller_key=service_key,
+            expires=root_expiry,
+            caveats=[{"type": "AllowedNetwork", "networks": ["corp_vpn"]}] # Client must evaluate this
+        )
+        capability_store[root_cap.id] = root_cap
+        console.print(f"[green]✓[/green] Root capability {root_cap.id} created.")
+    except ZCAPException as e:
+        console.print(f"[red]✗[/red] Creation failed: {e}")
+        return
 
-    service_key, admin_key, user_key = setup_environment(console)
+    console.print("\n[bold]STEP 2:[/bold] Admin delegates to User (expires in 12 hours, TimeSlot caveat)")
+    user_expiry = datetime.utcnow() + timedelta(hours=12)
+    try:
+        user_delegated_cap = delegate_capability(
+            parent_capability=root_cap, delegator_key=admin_key, new_invoker_did="did:example:user",
+            actions=[{"name": "read"}], # Narrowing actions
+            expires=user_expiry, # Narrowing expiry
+            caveats=[{"type": "TimeSlot", "start": "08:00", "end": "18:00"}],
+            did_key_store=did_key_store, revoked_capabilities=revoked_caps, capability_store=capability_store
+        )
+        capability_store[user_delegated_cap.id] = user_delegated_cap
+        console.print(f"[green]✓[/green] User delegated capability {user_delegated_cap.id} created.")
+    except ZCAPException as e:
+        console.print(f"[red]✗[/red] User delegation failed: {e}")
+        return
 
-    console.print("\n[bold]Setting up additional actor...[/bold]")
-    simulate_processing(console, "Generating guest key...", 0.5)
+    console.print("\n[bold]STEP 3:[/bold] User delegates to Guest (expires in 1 hour, no new action caveats, parent caveats apply)")
+    guest_expiry = datetime.utcnow() + timedelta(hours=1)
+    try:
+        guest_delegated_cap = delegate_capability(
+            parent_capability=user_delegated_cap, delegator_key=user_key, new_invoker_did="did:example:guest",
+            # Actions inherited from user_delegated_cap ('read')
+            expires=guest_expiry, # Further narrowing expiry
+            # No new caveats, but inherits TimeSlot and AllowedNetwork from parents
+            did_key_store=did_key_store, revoked_capabilities=revoked_caps, capability_store=capability_store
+        )
+        capability_store[guest_delegated_cap.id] = guest_delegated_cap
+        console.print(f"[green]✓[/green] Guest delegated capability {guest_delegated_cap.id} created.")
+    except ZCAPException as e:
+        console.print(f"[red]✗[/red] Guest delegation failed: {e}")
+        return
 
-    guest_key = ed25519.Ed25519PrivateKey.generate()
-    register_public_key("did:example:guest", guest_key.public_key())
-    console.print("[green]✓[/green] Registered guest identity: [cyan]did:example:guest[/cyan]")
+    console.print("\n[bold]STEP 4:[/bold] Verify Guest's capability (checks entire chain)")
+    try:
+        verify_capability(guest_delegated_cap, did_key_store, revoked_caps, capability_store)
+        console.print("[green]✓[/green] Guest capability verification: [bold green]Valid[/bold green] (assuming current time is within 08:00-18:00 and on corp_vpn)")
+    except CapabilityVerificationError as e:
+        console.print(f"[red]✗[/red] Guest capability verification failed: {e}")
 
-    # Create a resource target
-    target = {"id": "https://example.com/dashboard", "type": "Dashboard"}
+    console.print("\n[bold]STEP 5:[/bold] Guest attempts to invoke 'read' action")
+    # This will pass if current time is within 08:00-18:00 (from user_delegated_cap)
+    # and AllowedNetwork caveat (from root_cap) is considered met (client-side check)
+    try:
+        invoke_capability(guest_delegated_cap, "read", guest_key, did_key_store, revoked_caps, capability_store, nonces, nonce_ts)
+        console.print("[green]✓[/green] Guest invocation: [bold green]Successful[/bold green] (caveats met)")
+    except InvocationError as e:
+        console.print(f"[red]✗[/red] Guest invocation failed: {e}")
 
-    # Root capability with time-based caveat
-    expiry = datetime.utcnow() + timedelta(days=30)
-    console.print("\n[bold]STEP 1:[/bold] Creating root capability with 30-day expiry")
-    simulate_processing(console, "Creating root capability...", 0.8)
+    console.print("\n[bold]STEP 6:[/bold] Simulate revoking Admin's capability (root_cap)")
+    revoked_caps.add(root_cap.id)
+    console.print(f"[yellow]![/yellow] Root capability {root_cap.id} added to revoked set.")
 
-    root = create_capability(
-        controller="did:example:service",
-        invoker="did:example:admin",
-        actions=[
-            {"name": "view", "parameters": {}},
-            {"name": "edit", "parameters": {}},
-            {"name": "share", "parameters": {}},
-        ],
-        target=target,
-        controller_key=service_key,
-        caveats=[{"type": "ValidUntil", "date": expiry.isoformat()}],
-    )
+    console.print("\n[bold]STEP 7:[/bold] Guest attempts to invoke 'read' action again (should fail due to revoked parent)")
+    try:
+        invoke_capability(guest_delegated_cap, "read", guest_key, did_key_store, revoked_caps, capability_store, nonces, nonce_ts)
+        console.print("[red]![/red] Guest invocation after parent revoke: [bold green]Successful[/bold green] (UNEXPECTED)")
+    except (InvocationError, CapabilityVerificationError) as e:
+        console.print(f"[green]✓[/green] Guest invocation after parent revoke failed as expected: {e}")
+    console.print("--- Delegation Chain Caveats Example Complete ---\n")
 
-    root_table = Table(title="Root Capability")
-    root_table.add_column("Property", style="cyan")
-    root_table.add_column("Value", style="green")
 
-    root_table.add_row("Actions", "view, edit, share")
-    root_table.add_row("Caveats", f"ValidUntil: {expiry.isoformat()}")
+def unknown_and_unevaluatable_caveats_example():
+    """Demonstrate how unknown or client-side evaluatable caveats are handled."""
+    console = Console()
+    console.print(Panel.fit("[bold cyan]Unknown & Client-Side Caveats Example[/bold cyan]", border_style="cyan", padding=(1, 2)))
+    service_key, admin_key, _, _, did_key_store, capability_store, revoked_caps, nonces, nonce_ts = setup_environment(console)
+    target = {"id": "https://example.com/resource/special", "type": "SpecialResource"}
 
-    console.print(root_table)
+    console.print("\n[bold]STEP 1:[/bold] Creating capability with an 'UnknownCaveatType' and 'AllowedNetwork'")
+    try:
+        cap_with_unknown = create_capability(
+            controller_did="did:example:service", invoker_did="did:example:admin",
+            actions=[{"name": "use"}], target_info=target, controller_key=service_key,
+            caveats=[
+                {"type": "UnknownCaveatType", "detail": "some custom rule"},
+                {"type": "AllowedNetwork", "networks": ["192.168.1.0/24"]}
+            ]
+        )
+        capability_store[cap_with_unknown.id] = cap_with_unknown
+        console.print(f"[green]✓[/green] Capability {cap_with_unknown.id} created with unknown/client-side caveats.")
+    except ZCAPException as e:
+        console.print(f"[red]✗[/red] Creation failed: {e}")
+        return
 
-    # First delegation with action restrictions
-    console.print("\n[bold]STEP 2:[/bold] First delegation: admin to user with action restrictions")
-    simulate_processing(console, "Creating first delegation...", 0.8)
+    console.print("\n[bold]STEP 2:[/bold] Verifying capability with 'UnknownCaveatType' (should fail by default)")
+    try:
+        verify_capability(cap_with_unknown, did_key_store, revoked_caps, capability_store)
+        console.print("[red]![/red] Verification with unknown caveat: [bold green]Valid[/bold green] (UNEXPECTED - unknown caveats should cause failure)")
+    except CapabilityVerificationError as e:
+        console.print(f"[green]✓[/green] Verification with unknown caveat failed as expected: {e}")
 
-    first_delegation = delegate_capability(
-        parent_capability=root,
-        delegator_key=admin_key,
-        new_invoker="did:example:user",
-        caveats=[{"type": "AllowedAction", "actions": ["view", "share"]}],
-    )
+    console.print("\n[bold]STEP 3:[/bold] Invoking capability (should also fail due to unknown caveat during verification path)")
+    # Even if AllowedNetwork is met client-side, the UnknownCaveatType should prevent invocation via verify_capability failing.
+    try:
+        invoke_capability(cap_with_unknown, "use", admin_key, did_key_store, revoked_caps, capability_store, nonces, nonce_ts)
+        console.print("[red]![/red] Invocation with unknown caveat: [bold green]Successful[/bold green] (UNEXPECTED)")
+    except (InvocationError, CapabilityVerificationError) as e:
+        # The error might be CapabilityVerificationError if verify_capability is called internally first and fails
+        console.print(f"[green]✓[/green] Invocation with unknown caveat failed as expected: {e}")
 
-    first_table = Table(title="First Delegation (User)")
-    first_table.add_column("Property", style="cyan")
-    first_table.add_column("Value", style="green")
-
-    first_table.add_row("Allowed Actions", "view, share")
-    first_table.add_row("Caveats", "AllowedAction: [view, share]")
-    first_table.add_row("Original Caveats", f"ValidUntil: {expiry.isoformat()}")
-
-    console.print(first_table)
-
-    # Second delegation with parameter restrictions
-    console.print("\n[bold]STEP 3:[/bold] Second delegation: user to guest with parameter restrictions")
-    simulate_processing(console, "Creating second delegation...", 0.8)
-
-    second_delegation = delegate_capability(
-        parent_capability=first_delegation,
-        delegator_key=user_key,
-        new_invoker="did:example:guest",
-        caveats=[{"type": "RequireParameter", "parameter": "mode", "value": "basic"}],
-    )
-
-    second_table = Table(title="Second Delegation (Guest)")
-    second_table.add_column("Property", style="cyan")
-    second_table.add_column("Value", style="green")
-
-    second_table.add_row("Allowed Actions", "view, share")
-    second_table.add_row("Required Parameters", "mode=basic")
-    second_table.add_row("Accumulated Caveats", "ValidUntil + AllowedAction + RequireParameter")
-
-    console.print(second_table)
-
-    # Test invocations
-    # Try to invoke with allowed action but missing parameter
-    console.print("\n[bold]STEP 4:[/bold] Guest invocation with missing parameter")
-    simulate_processing(console, "Invoking with missing parameter...", 0.8)
-
-    invocation1 = invoke_capability(second_delegation, "view", guest_key)
-
-    if invocation1:
-        console.print("[red]![/red] Guest invocation with missing parameter: [bold green]Successful[/bold green] (unexpected)")
-    else:
-        console.print("[green]✓[/green] Guest invocation with missing parameter: [bold red]Failed[/bold red] (as expected)")
-
-    # Try with correct parameter but prohibited action
-    console.print("\n[bold]STEP 5:[/bold] Guest invocation with prohibited action")
-    simulate_processing(console, "Invoking with prohibited action...", 0.8)
-
-    invocation2 = invoke_capability(
-        second_delegation, "edit", guest_key, {"mode": "basic"}
-    )
-
-    if invocation2:
-        console.print("[red]![/red] Guest invocation with prohibited action: [bold green]Successful[/bold green] (unexpected)")
-    else:
-        console.print("[green]✓[/green] Guest invocation with prohibited action: [bold red]Failed[/bold red] (as expected)")
-
-    # Try with allowed action and correct parameter
-    console.print("\n[bold]STEP 6:[/bold] Guest invocation with correct action and parameter")
-    simulate_processing(console, "Invoking with correct configuration...", 0.8)
-
-    invocation3 = invoke_capability(
-        second_delegation, "view", guest_key, {"mode": "basic"}
-    )
-
-    if invocation3:
-        console.print("[green]✓[/green] Guest invocation with correct action and parameter: [bold green]Successful[/bold green]")
-
-        final_table = Table(title="Successful Invocation")
-        final_table.add_column("Property", style="cyan")
-        final_table.add_column("Value", style="green")
-
-        final_table.add_row("ID", invocation3['id'])
-        final_table.add_row("Action", invocation3['action'])
-        final_table.add_row("Parameter", f"mode={invocation3['parameters']['mode']}")
-
-        console.print(final_table)
-    else:
-        console.print("[red]✗[/red] Guest invocation with correct action and parameter: [bold red]Failed[/bold red]")
+    console.print("\nNote: 'AllowedNetwork' type caveats are skipped by the library's evaluate_caveat function ")
+    console.print("as they require client-side context (e.g., request IP). The client application is responsible")
+    console.print("for evaluating such caveats before or after library calls if they are critical.")
+    console.print("The library fails on *unknown* caveat types by default.")
+    console.print("--- Unknown & Client-Side Caveats Example Complete ---\n")
 
 
 if __name__ == "__main__":
-    console = Console()
-
     time_based_caveats_example()
-
-    console.print("\n\n")
-
     action_restriction_caveats_example()
-
-    console.print("\n\n")
-
     parameter_restriction_example()
-
-    console.print("\n\n")
-
     conditional_caveat_example()
-
-    console.print("\n\n")
-
     delegation_chain_caveats_example()
-
-    console.print(Panel.fit(
-        "[bold green]Caveat Examples Completed Successfully![/bold green]",
-        border_style="green",
-        padding=(1, 2)
-    ))
+    unknown_and_unevaluatable_caveats_example()

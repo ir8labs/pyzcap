@@ -2,7 +2,7 @@
 
 setup:
 	python -m pip install --upgrade pip
-	pip install ruff pytest pytest-cov pdm bandit
+	pip install ruff pytest pytest-cov pytest-asyncio pdm bandit
 
 install:
 	pdm install

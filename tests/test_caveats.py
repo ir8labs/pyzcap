@@ -2,306 +2,456 @@
 Test cases for ZCAP-LD caveat enforcement.
 """
 
-import unittest
 from datetime import datetime, timedelta
+
+import pytest  # type: ignore
+import pytest_asyncio  # type: ignore
 from cryptography.hazmat.primitives.asymmetric import ed25519
+
 from zcap.capability import (
+    CapabilityVerificationError,
+    InvocationError,
     create_capability,
     delegate_capability,
     invoke_capability,
     verify_capability,
-    CapabilityVerificationError,
-    InvocationError,
 )
 from zcap.models import Capability
 
 
-class CaveatEnforcementTests(unittest.TestCase):
-    """Test cases for ZCAP-LD caveat enforcement."""
+@pytest_asyncio.fixture
+async def env_setup():
+    """Set up test keys and identities and client-managed stores."""
+    controller_private = ed25519.Ed25519PrivateKey.generate()
+    controller_public = controller_private.public_key()
+    controller_did = "did:key:controller"
 
-    def setUp(self):
-        """Set up test keys and identities and client-managed stores."""
-        self.controller_private = ed25519.Ed25519PrivateKey.generate()
-        self.controller_public = self.controller_private.public_key()
-        self.controller_did = "did:key:controller"
+    invoker_private = ed25519.Ed25519PrivateKey.generate()
+    invoker_public = invoker_private.public_key()
+    invoker_did = "did:key:invoker"
 
-        self.invoker_private = ed25519.Ed25519PrivateKey.generate()
-        self.invoker_public = self.invoker_private.public_key()
-        self.invoker_did = "did:key:invoker"
+    delegate_private = ed25519.Ed25519PrivateKey.generate()
+    delegate_public = delegate_private.public_key()
+    delegate_did = "did:key:delegate"
 
-        self.delegate_private = ed25519.Ed25519PrivateKey.generate()
-        self.delegate_public = self.delegate_private.public_key()
-        self.delegate_did = "did:key:delegate"
+    did_key_store = {
+        controller_did: controller_public,
+        invoker_did: invoker_public,
+        delegate_did: delegate_public,
+    }
+    capability_store = {}
+    revoked_capabilities = set()
+    used_invocation_nonces = set()
+    nonce_timestamps = {}
 
-        # Client-managed stores
-        self.did_key_store = {
-            self.controller_did: self.controller_public,
-            self.invoker_did: self.invoker_public,
-            self.delegate_did: self.delegate_public,
-        }
-        self.capability_store = {}
-        self.revoked_capabilities = set()
-        self.used_invocation_nonces = set()
-        self.nonce_timestamps = {}
-        # For ValidWhileTrue, we might need a separate set if conditionId isn't a capability ID
-        # For this test, we'll assume condition_id can be added to revoked_capabilities.
+    target_info = {
+        "id": "https://example.com/resource/1",
+        "type": "ExampleResource",
+    }
+    actions = [
+        {"name": "read", "parameters": {}},
+        {"name": "write", "parameters": {}},
+    ]
+    return (
+        controller_private,
+        controller_did,
+        invoker_private,
+        invoker_did,
+        delegate_private,
+        delegate_did,
+        did_key_store,
+        capability_store,
+        revoked_capabilities,
+        used_invocation_nonces,
+        nonce_timestamps,
+        target_info,
+        actions,
+    )
 
-        self.target_info = {
-            "id": "https://example.com/resource/1",
-            "type": "ExampleResource",
-        }
-        self.actions = [
-            {"name": "read", "parameters": {}},
-            {"name": "write", "parameters": {}},
-        ]
 
-    def _add_cap_to_store(self, cap: Capability):
-        self.capability_store[cap.id] = cap
+def _add_cap_to_store(capability_store, cap: Capability):  # Helper remains sync
+    capability_store[cap.id] = cap
 
-    def test_time_based_caveats(self):
-        """Test time-based caveats (ValidUntil, ValidAfter)."""
-        # Capability that is valid for 1 hour
-        future = datetime.utcnow() + timedelta(hours=1)
-        caveats1 = [{"type": "ValidUntil", "date": future.isoformat()}]
 
-        cap1 = create_capability(
-            controller_did=self.controller_did,
-            invoker_did=self.invoker_did,
-            target_info=self.target_info,
-            actions=self.actions,
-            controller_key=self.controller_private,
-            caveats=caveats1,
+@pytest.mark.asyncio
+async def test_time_based_caveats(env_setup):
+    """Test time-based caveats (ValidUntil, ValidAfter)."""
+    (
+        controller_private,
+        controller_did,
+        invoker_private,
+        invoker_did,
+        _,
+        _,  # delegate_private, delegate_did
+        did_key_store,
+        capability_store,
+        revoked_capabilities,
+        used_invocation_nonces,
+        nonce_timestamps,
+        target_info,
+        actions,
+    ) = env_setup
+
+    # Capability that is valid for 1 hour
+    future = datetime.utcnow() + timedelta(hours=1)
+    caveats1 = [{"type": "ValidUntil", "date": future.isoformat()}]
+
+    cap1 = await create_capability(
+        controller_did=controller_did,
+        invoker_did=invoker_did,
+        target_info=target_info,
+        actions=actions,
+        controller_key=controller_private,
+        caveats=caveats1,
+    )
+    _add_cap_to_store(capability_store, cap1)
+
+    # Should verify and invoke successfully
+    try:
+        await verify_capability(
+            cap1, did_key_store, revoked_capabilities, capability_store
         )
-        self._add_cap_to_store(cap1)
+    except CapabilityVerificationError as e:
+        pytest.fail(f"Valid capability verification failed: {e}")
 
-        # Should verify and invoke successfully
-        try:
-            verify_capability(cap1, self.did_key_store, self.revoked_capabilities, self.capability_store)
-        except CapabilityVerificationError as e:
-            self.fail(f"Valid capability verification failed: {e}")
-        
-        invocation1 = invoke_capability(
-            capability=cap1, action_name="read", invoker_key=self.invoker_private,
-            did_key_store=self.did_key_store, capability_store=self.capability_store,
-            revoked_capabilities=self.revoked_capabilities,
-            used_invocation_nonces=self.used_invocation_nonces, nonce_timestamps=self.nonce_timestamps
+    invocation1 = await invoke_capability(
+        capability=cap1,
+        action_name="read",
+        invoker_key=invoker_private,
+        did_key_store=did_key_store,
+        capability_store=capability_store,
+        revoked_capabilities=revoked_capabilities,
+        used_invocation_nonces=used_invocation_nonces,
+        nonce_timestamps=nonce_timestamps,
+    )
+    assert invocation1 is not None
+
+    # Capability that is valid starting tomorrow
+    tomorrow = datetime.utcnow() + timedelta(days=1)
+    caveats2 = [{"type": "ValidAfter", "date": tomorrow.isoformat()}]
+
+    cap2 = await create_capability(
+        controller_did=controller_did,
+        invoker_did=invoker_did,
+        target_info=target_info,
+        actions=actions,
+        controller_key=controller_private,
+        caveats=caveats2,
+    )
+    _add_cap_to_store(capability_store, cap2)
+
+    # Should fail verification and invocation
+    with pytest.raises(CapabilityVerificationError):
+        await verify_capability(
+            cap2, did_key_store, revoked_capabilities, capability_store
         )
-        self.assertIsNotNone(invocation1)
 
-        # Capability that is valid starting tomorrow
-        tomorrow = datetime.utcnow() + timedelta(days=1)
-        caveats2 = [{"type": "ValidAfter", "date": tomorrow.isoformat()}]
-
-        cap2 = create_capability(
-            controller_did=self.controller_did,
-            invoker_did=self.invoker_did,
-            target_info=self.target_info,
-            actions=self.actions,
-            controller_key=self.controller_private,
-            caveats=caveats2,
+    with pytest.raises(
+        CapabilityVerificationError
+    ):  # Invocation first verifies capability
+        await invoke_capability(
+            capability=cap2,
+            action_name="read",
+            invoker_key=invoker_private,
+            did_key_store=did_key_store,
+            capability_store=capability_store,
+            revoked_capabilities=revoked_capabilities,
+            used_invocation_nonces=used_invocation_nonces,
+            nonce_timestamps=nonce_timestamps,
         )
-        self._add_cap_to_store(cap2)
 
-        # Should fail verification and invocation
-        with self.assertRaises(CapabilityVerificationError):
-            verify_capability(cap2, self.did_key_store, self.revoked_capabilities, self.capability_store)
-        
-        with self.assertRaises(CapabilityVerificationError):
-            invoke_capability(
-                capability=cap2, action_name="read", invoker_key=self.invoker_private,
-                did_key_store=self.did_key_store, capability_store=self.capability_store,
-                revoked_capabilities=self.revoked_capabilities,
-                used_invocation_nonces=self.used_invocation_nonces, nonce_timestamps=self.nonce_timestamps
-            )
 
-    def test_action_specific_caveats(self):
-        """Test action-specific caveats."""
-        caveats_allowed_action = [{"type": "AllowedAction", "actions": ["read"]}]
+@pytest.mark.asyncio
+async def test_action_specific_caveats(env_setup):
+    """Test action-specific caveats."""
+    (
+        controller_private,
+        controller_did,
+        invoker_private,
+        invoker_did,
+        _,
+        _,  # delegate_private, delegate_did
+        did_key_store,
+        capability_store,
+        revoked_capabilities,
+        used_invocation_nonces,
+        nonce_timestamps,
+        target_info,
+        actions,
+    ) = env_setup
 
-        cap_allowed = create_capability(
-            controller_did=self.controller_did,
-            invoker_did=self.invoker_did,
-            target_info=self.target_info,
-            actions=self.actions, # Main capability allows read and write
-            controller_key=self.controller_private,
-            caveats=caveats_allowed_action,
+    caveats_allowed_action = [{"type": "AllowedAction", "actions": ["read"]}]
+
+    cap_allowed = await create_capability(
+        controller_did=controller_did,
+        invoker_did=invoker_did,
+        target_info=target_info,
+        actions=actions,  # Main capability allows read and write
+        controller_key=controller_private,
+        caveats=caveats_allowed_action,
+    )
+    _add_cap_to_store(capability_store, cap_allowed)
+
+    try:
+        await verify_capability(
+            cap_allowed, did_key_store, revoked_capabilities, capability_store
         )
-        self._add_cap_to_store(cap_allowed)
+    except CapabilityVerificationError as e:
+        pytest.fail(f"AllowedAction cap verification failed: {e}")
 
-        try:
-            verify_capability(cap_allowed, self.did_key_store, self.revoked_capabilities, self.capability_store)
-        except CapabilityVerificationError as e:
-            self.fail(f"AllowedAction cap verification failed: {e}")
+    read_invocation = await invoke_capability(
+        capability=cap_allowed,
+        action_name="read",
+        invoker_key=invoker_private,
+        did_key_store=did_key_store,
+        capability_store=capability_store,
+        revoked_capabilities=revoked_capabilities,
+        used_invocation_nonces=used_invocation_nonces,
+        nonce_timestamps=nonce_timestamps,
+    )
+    assert read_invocation is not None
+    assert read_invocation["action"] == "read"
 
-        read_invocation = invoke_capability(
-            capability=cap_allowed, action_name="read", invoker_key=self.invoker_private,
-            did_key_store=self.did_key_store, capability_store=self.capability_store,
-            revoked_capabilities=self.revoked_capabilities,
-            used_invocation_nonces=self.used_invocation_nonces, nonce_timestamps=self.nonce_timestamps
+    with pytest.raises(InvocationError):  # Caveat restricts to 'read'
+        await invoke_capability(
+            capability=cap_allowed,
+            action_name="write",
+            invoker_key=invoker_private,
+            did_key_store=did_key_store,
+            capability_store=capability_store,
+            revoked_capabilities=revoked_capabilities,
+            used_invocation_nonces=used_invocation_nonces,
+            nonce_timestamps=nonce_timestamps,
         )
-        self.assertIsNotNone(read_invocation)
-        self.assertEqual(read_invocation["action"], "read")
 
-        with self.assertRaises(InvocationError): # Caveat restricts to 'read'
-            invoke_capability(
-                capability=cap_allowed, action_name="write", invoker_key=self.invoker_private,
-                did_key_store=self.did_key_store, capability_store=self.capability_store,
-                revoked_capabilities=self.revoked_capabilities,
-                used_invocation_nonces=self.used_invocation_nonces, nonce_timestamps=self.nonce_timestamps
-            )
+    caveats_req_param = [
+        {"type": "RequireParameter", "parameter": "mode", "value": "secure"}
+    ]
+    cap_req_param = await create_capability(
+        controller_did=controller_did,
+        invoker_did=invoker_did,
+        target_info=target_info,
+        actions=actions,
+        controller_key=controller_private,
+        caveats=caveats_req_param,
+    )
+    _add_cap_to_store(capability_store, cap_req_param)
 
-        caveats_req_param = [{"type": "RequireParameter", "parameter": "mode", "value": "secure"}]
-        cap_req_param = create_capability(
-            controller_did=self.controller_did,
-            invoker_did=self.invoker_did,
-            target_info=self.target_info,
-            actions=self.actions,
-            controller_key=self.controller_private,
-            caveats=caveats_req_param,
+    with pytest.raises(InvocationError):  # Missing parameter
+        await invoke_capability(
+            capability=cap_req_param,
+            action_name="read",
+            invoker_key=invoker_private,
+            did_key_store=did_key_store,
+            capability_store=capability_store,
+            revoked_capabilities=revoked_capabilities,
+            used_invocation_nonces=used_invocation_nonces,
+            nonce_timestamps=nonce_timestamps,
         )
-        self._add_cap_to_store(cap_req_param)
 
-        with self.assertRaises(InvocationError): # Missing parameter
-            invoke_capability(
-                capability=cap_req_param, action_name="read", invoker_key=self.invoker_private,
-                did_key_store=self.did_key_store, capability_store=self.capability_store,
-                revoked_capabilities=self.revoked_capabilities,
-                used_invocation_nonces=self.used_invocation_nonces, nonce_timestamps=self.nonce_timestamps
-            )
-        
-        with self.assertRaises(InvocationError): # Wrong parameter value
-            invoke_capability(
-                capability=cap_req_param, action_name="read", invoker_key=self.invoker_private, 
-                parameters={"mode": "insecure"},
-                did_key_store=self.did_key_store, capability_store=self.capability_store,
-                revoked_capabilities=self.revoked_capabilities,
-                used_invocation_nonces=self.used_invocation_nonces, nonce_timestamps=self.nonce_timestamps
-            )
-
-        correct_param_invocation = invoke_capability(
-            capability=cap_req_param, action_name="read", invoker_key=self.invoker_private, 
-            parameters={"mode": "secure"},
-            did_key_store=self.did_key_store, capability_store=self.capability_store,
-            revoked_capabilities=self.revoked_capabilities,
-            used_invocation_nonces=self.used_invocation_nonces, nonce_timestamps=self.nonce_timestamps
+    with pytest.raises(InvocationError):  # Wrong parameter value
+        await invoke_capability(
+            capability=cap_req_param,
+            action_name="read",
+            invoker_key=invoker_private,
+            parameters={"mode": "insecure"},
+            did_key_store=did_key_store,
+            capability_store=capability_store,
+            revoked_capabilities=revoked_capabilities,
+            used_invocation_nonces=used_invocation_nonces,
+            nonce_timestamps=nonce_timestamps,
         )
-        self.assertIsNotNone(correct_param_invocation)
-        self.assertEqual(correct_param_invocation["action"], "read")
-        self.assertEqual(correct_param_invocation["parameters"]["mode"], "secure")
 
-    def test_valid_while_true_caveat(self):
-        """Test ValidWhileTrue caveat type."""
-        condition_id = "urn:uuid:some-revocable-condition-id" # Treat as a capability ID for this test
-        caveats = [{"type": "ValidWhileTrue", "conditionId": condition_id}]
+    correct_param_invocation = await invoke_capability(
+        capability=cap_req_param,
+        action_name="read",
+        invoker_key=invoker_private,
+        parameters={"mode": "secure"},
+        did_key_store=did_key_store,
+        capability_store=capability_store,
+        revoked_capabilities=revoked_capabilities,
+        used_invocation_nonces=used_invocation_nonces,
+        nonce_timestamps=nonce_timestamps,
+    )
+    assert correct_param_invocation is not None
+    assert correct_param_invocation["action"] == "read"
+    assert correct_param_invocation["parameters"]["mode"] == "secure"
 
-        cap_vwt = create_capability(
-            controller_did=self.controller_did,
-            invoker_did=self.invoker_did,
-            target_info=self.target_info,
-            actions=self.actions,
-            controller_key=self.controller_private,
-            caveats=caveats,
+
+@pytest.mark.asyncio
+async def test_valid_while_true_caveat(env_setup):
+    """Test ValidWhileTrue caveat type."""
+    (
+        controller_private,
+        controller_did,
+        invoker_private,
+        invoker_did,
+        _,
+        _,  # delegate_private, delegate_did
+        did_key_store,
+        capability_store,
+        revoked_capabilities,
+        used_invocation_nonces,
+        nonce_timestamps,
+        target_info,
+        actions,
+    ) = env_setup
+    condition_id = "urn:uuid:some-revocable-condition-id"
+    caveats = [{"type": "ValidWhileTrue", "conditionId": condition_id}]
+
+    cap_vwt = await create_capability(
+        controller_did=controller_did,
+        invoker_did=invoker_did,
+        target_info=target_info,
+        actions=actions,
+        controller_key=controller_private,
+        caveats=caveats,
+    )
+    _add_cap_to_store(capability_store, cap_vwt)
+
+    try:  # Initially not revoked
+        await verify_capability(
+            cap_vwt, did_key_store, revoked_capabilities, capability_store
         )
-        self._add_cap_to_store(cap_vwt)
+    except CapabilityVerificationError as e:
+        pytest.fail(f"VWT cap initial verification failed: {e}")
 
-        try: # Initially not revoked
-            verify_capability(cap_vwt, self.did_key_store, self.revoked_capabilities, self.capability_store)
-        except CapabilityVerificationError as e:
-            self.fail(f"VWT cap initial verification failed: {e}")
-        
-        invocation_before_revoke = invoke_capability(
-            capability=cap_vwt, action_name="read", invoker_key=self.invoker_private,
-            did_key_store=self.did_key_store, capability_store=self.capability_store,
-            revoked_capabilities=self.revoked_capabilities, # initially empty or condition_id not in it
-            used_invocation_nonces=self.used_invocation_nonces, nonce_timestamps=self.nonce_timestamps
+    invocation_before_revoke = await invoke_capability(
+        capability=cap_vwt,
+        action_name="read",
+        invoker_key=invoker_private,
+        did_key_store=did_key_store,
+        capability_store=capability_store,
+        revoked_capabilities=revoked_capabilities,
+        used_invocation_nonces=used_invocation_nonces,
+        nonce_timestamps=nonce_timestamps,
+    )
+    assert invocation_before_revoke is not None
+
+    revoked_capabilities.add(condition_id)
+
+    with pytest.raises(CapabilityVerificationError):
+        await verify_capability(
+            cap_vwt, did_key_store, revoked_capabilities, capability_store
         )
-        self.assertIsNotNone(invocation_before_revoke)
 
-        # "Revoke" the condition by adding its ID to the set of revoked IDs
-        self.revoked_capabilities.add(condition_id)
-
-        with self.assertRaises(CapabilityVerificationError): # Should fail verification because condition_id is revoked
-            verify_capability(cap_vwt, self.did_key_store, self.revoked_capabilities, self.capability_store)
-        
-        with self.assertRaises(CapabilityVerificationError): # Changed from InvocationError
-            invoke_capability(
-                capability=cap_vwt, action_name="read", invoker_key=self.invoker_private,
-                did_key_store=self.did_key_store, capability_store=self.capability_store,
-                revoked_capabilities=self.revoked_capabilities, # now contains condition_id
-                used_invocation_nonces=self.used_invocation_nonces, nonce_timestamps=self.nonce_timestamps
-            )
-
-    def test_delegation_with_caveats(self):
-        """Test that caveats are enforced throughout delegation chain."""
-        root_cap = create_capability(
-            controller_did=self.controller_did,
-            invoker_did=self.invoker_did,
-            target_info=self.target_info,
-            actions=self.actions,
-            controller_key=self.controller_private,
+    with pytest.raises(
+        CapabilityVerificationError
+    ):  # Invocation first verifies capability
+        await invoke_capability(
+            capability=cap_vwt,
+            action_name="read",
+            invoker_key=invoker_private,
+            did_key_store=did_key_store,
+            capability_store=capability_store,
+            revoked_capabilities=revoked_capabilities,
+            used_invocation_nonces=used_invocation_nonces,
+            nonce_timestamps=nonce_timestamps,
         )
-        self._add_cap_to_store(root_cap)
 
-        future = datetime.utcnow() + timedelta(hours=1)
-        delegation_caveats = [{"type": "ValidUntil", "date": future.isoformat()}]
 
-        delegated_cap = delegate_capability(
-            parent_capability=root_cap,
-            delegator_key=self.invoker_private,
-            new_invoker_did=self.delegate_did,
-            caveats=delegation_caveats,
-            did_key_store=self.did_key_store,
-            capability_store=self.capability_store,
-            revoked_capabilities=self.revoked_capabilities
+@pytest.mark.asyncio
+async def test_delegation_with_caveats(env_setup):
+    """Test that caveats are enforced throughout delegation chain."""
+    (
+        controller_private,
+        controller_did,
+        invoker_private,
+        invoker_did,
+        delegate_private,
+        delegate_did,
+        did_key_store,
+        capability_store,
+        revoked_capabilities,
+        used_invocation_nonces,
+        nonce_timestamps,
+        target_info,
+        actions,
+    ) = env_setup
+
+    root_cap = await create_capability(
+        controller_did=controller_did,
+        invoker_did=invoker_did,
+        target_info=target_info,
+        actions=actions,
+        controller_key=controller_private,
+    )
+    _add_cap_to_store(capability_store, root_cap)
+
+    future = datetime.utcnow() + timedelta(hours=1)
+    delegation_caveats = [{"type": "ValidUntil", "date": future.isoformat()}]
+
+    delegated_cap = await delegate_capability(
+        parent_capability=root_cap,
+        delegator_key=invoker_private,
+        new_invoker_did=delegate_did,
+        caveats=delegation_caveats,
+        did_key_store=did_key_store,
+        capability_store=capability_store,
+        revoked_capabilities=revoked_capabilities,
+    )
+    _add_cap_to_store(capability_store, delegated_cap)
+
+    try:
+        await verify_capability(
+            delegated_cap, did_key_store, revoked_capabilities, capability_store
         )
-        self._add_cap_to_store(delegated_cap)
+    except CapabilityVerificationError as e:
+        pytest.fail(f"Delegated cap verification failed: {e}")
 
-        try:
-            verify_capability(delegated_cap, self.did_key_store, self.revoked_capabilities, self.capability_store)
-        except CapabilityVerificationError as e:
-            self.fail(f"Delegated cap verification failed: {e}")
+    invocation_delegated = await invoke_capability(
+        capability=delegated_cap,
+        action_name="read",
+        invoker_key=delegate_private,
+        did_key_store=did_key_store,
+        capability_store=capability_store,
+        revoked_capabilities=revoked_capabilities,
+        used_invocation_nonces=used_invocation_nonces,
+        nonce_timestamps=nonce_timestamps,
+    )
+    assert invocation_delegated is not None
 
-        invocation_delegated = invoke_capability(
-            capability=delegated_cap, action_name="read", invoker_key=self.delegate_private,
-            did_key_store=self.did_key_store, capability_store=self.capability_store,
-            revoked_capabilities=self.revoked_capabilities,
-            used_invocation_nonces=self.used_invocation_nonces, nonce_timestamps=self.nonce_timestamps
+    action_caveat = [{"type": "AllowedAction", "actions": ["read"]}]
+    sub_delegated_cap = await delegate_capability(
+        parent_capability=delegated_cap,
+        delegator_key=delegate_private,  # Key of invoker of delegated_cap (delegate_did)
+        new_invoker_did=controller_did,  # Delegate back to controller
+        caveats=action_caveat,
+        did_key_store=did_key_store,
+        capability_store=capability_store,
+        revoked_capabilities=revoked_capabilities,
+    )
+    _add_cap_to_store(capability_store, sub_delegated_cap)
+
+    try:
+        await verify_capability(
+            sub_delegated_cap, did_key_store, revoked_capabilities, capability_store
         )
-        self.assertIsNotNone(invocation_delegated)
+    except CapabilityVerificationError as e:
+        pytest.fail(f"Sub-delegated cap verification failed: {e}")
 
-        action_caveat = [{"type": "AllowedAction", "actions": ["read"]}]
-        sub_delegated_cap = delegate_capability(
-            parent_capability=delegated_cap,
-            delegator_key=self.delegate_private,
-            new_invoker_did=self.controller_did,  # Delegate back to controller
-            caveats=action_caveat,
-            did_key_store=self.did_key_store,
-            capability_store=self.capability_store,
-            revoked_capabilities=self.revoked_capabilities
+    read_invocation_sub = await invoke_capability(
+        capability=sub_delegated_cap,
+        action_name="read",
+        invoker_key=controller_private,
+        did_key_store=did_key_store,
+        capability_store=capability_store,
+        revoked_capabilities=revoked_capabilities,
+        used_invocation_nonces=used_invocation_nonces,
+        nonce_timestamps=nonce_timestamps,
+    )
+    assert read_invocation_sub is not None
+
+    with pytest.raises(
+        InvocationError
+    ):  # write should fail due to AllowedAction caveat in chain
+        await invoke_capability(
+            capability=sub_delegated_cap,
+            action_name="write",
+            invoker_key=controller_private,
+            did_key_store=did_key_store,
+            capability_store=capability_store,
+            revoked_capabilities=revoked_capabilities,
+            used_invocation_nonces=used_invocation_nonces,
+            nonce_timestamps=nonce_timestamps,
         )
-        self._add_cap_to_store(sub_delegated_cap)
-
-        try:
-            verify_capability(sub_delegated_cap, self.did_key_store, self.revoked_capabilities, self.capability_store)
-        except CapabilityVerificationError as e:
-            self.fail(f"Sub-delegated cap verification failed: {e}")
-
-        read_invocation_sub = invoke_capability(
-            capability=sub_delegated_cap, action_name="read", invoker_key=self.controller_private,
-            did_key_store=self.did_key_store, capability_store=self.capability_store,
-            revoked_capabilities=self.revoked_capabilities,
-            used_invocation_nonces=self.used_invocation_nonces, nonce_timestamps=self.nonce_timestamps
-        )
-        self.assertIsNotNone(read_invocation_sub)
-
-        with self.assertRaises(InvocationError): # write should fail due to AllowedAction caveat in chain
-            invoke_capability(
-                capability=sub_delegated_cap, action_name="write", invoker_key=self.controller_private,
-                did_key_store=self.did_key_store, capability_store=self.capability_store,
-                revoked_capabilities=self.revoked_capabilities,
-                used_invocation_nonces=self.used_invocation_nonces, nonce_timestamps=self.nonce_timestamps
-            )
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -9,6 +9,7 @@ This example simulates a document sharing system where:
 5. Bob revokes Charlie's access
 """
 
+import asyncio
 import time
 from datetime import datetime, timedelta
 from typing import Dict, Set
@@ -30,6 +31,8 @@ from zcap import (
     create_capability,
     delegate_capability,
     invoke_capability,
+    verify_capability,
+    verify_invocation,
 )
 from zcap.models import Capability
 
@@ -69,12 +72,12 @@ class DocumentSystem:
     def __init__(self):
         self.documents: Dict[str, Document] = {}
 
-    def create_document(self, id: str, content: str, owner: str) -> Document:
+    async def create_document(self, id: str, content: str, owner: str) -> Document:
         doc = Document(id, content, owner)
         self.documents[id] = doc
         return doc
 
-    def read_document(
+    async def read_document(
         self,
         doc_id: str,
         capability_to_invoke: Capability,
@@ -83,20 +86,42 @@ class DocumentSystem:
         capability_store: Dict[str, Capability],
         revoked_capabilities: Set[str],
         used_invocation_nonces: Set[str],
-        nonce_timestamps: Dict[str, datetime]
+        nonce_timestamps: Dict[str, datetime],
     ) -> str:
         """Read a document if the capability allows it."""
         try:
-            invoke_capability(
-                capability_to_invoke, "read", invoker_key,
-                did_key_store, revoked_capabilities, capability_store,
-                used_invocation_nonces, nonce_timestamps
+            await verify_capability(
+                capability_to_invoke,
+                did_key_store,
+                revoked_capabilities,
+                capability_store,
+            )
+            await verify_invocation(
+                await invoke_capability(
+                    capability_to_invoke,
+                    "read",
+                    invoker_key,
+                    did_key_store,
+                    revoked_capabilities,
+                    capability_store,
+                    used_invocation_nonces,
+                    nonce_timestamps,
+                ),
+                did_key_store,
+                revoked_capabilities,
+                capability_store,
             )
             return self.documents[doc_id].read()
-        except (InvocationError, CapabilityVerificationError, DIDKeyNotFoundError, CapabilityNotFoundError, ZCAPException) as e:
+        except (
+            InvocationError,
+            CapabilityVerificationError,
+            DIDKeyNotFoundError,
+            CapabilityNotFoundError,
+            ZCAPException,
+        ) as e:
             raise PermissionError(f"Access denied to read document {doc_id}: {e}")
 
-    def write_document(
+    async def write_document(
         self,
         doc_id: str,
         content: str,
@@ -106,30 +131,54 @@ class DocumentSystem:
         capability_store: Dict[str, Capability],
         revoked_capabilities: Set[str],
         used_invocation_nonces: Set[str],
-        nonce_timestamps: Dict[str, datetime]
+        nonce_timestamps: Dict[str, datetime],
     ) -> None:
         """Write to a document if the capability allows it."""
         try:
-            invoke_capability(
-                capability_to_invoke, "write", invoker_key,
-                did_key_store, revoked_capabilities, capability_store,
-                used_invocation_nonces, nonce_timestamps,
-                parameters={"content_length": len(content)}
+            await verify_capability(
+                capability_to_invoke,
+                did_key_store,
+                revoked_capabilities,
+                capability_store,
+            )
+            await verify_invocation(
+                await invoke_capability(
+                    capability_to_invoke,
+                    "write",
+                    invoker_key,
+                    did_key_store,
+                    revoked_capabilities,
+                    capability_store,
+                    used_invocation_nonces,
+                    nonce_timestamps,
+                    parameters={"content_length": len(content)},
+                ),
+                did_key_store,
+                revoked_capabilities,
+                capability_store,
             )
             self.documents[doc_id].write(content)
-        except (InvocationError, CapabilityVerificationError, DIDKeyNotFoundError, CapabilityNotFoundError, ZCAPException) as e:
+        except (
+            InvocationError,
+            CapabilityVerificationError,
+            DIDKeyNotFoundError,
+            CapabilityNotFoundError,
+            ZCAPException,
+        ) as e:
             raise PermissionError(f"Access denied to write document {doc_id}: {e}")
 
 
-def main():
+async def main():
     console = Console()
 
     # Display header
-    console.print(Panel.fit(
-        "[bold cyan]zcap Document Sharing Demo[/bold cyan]",
-        border_style="cyan",
-        padding=(1, 2)
-    ))
+    console.print(
+        Panel.fit(
+            "[bold cyan]zcap Document Sharing Demo[/bold cyan]",
+            border_style="cyan",
+            padding=(1, 2),
+        )
+    )
 
     # Initialize stores
     did_key_store: Dict[str, ed25519.Ed25519PublicKey] = {}
@@ -183,7 +232,7 @@ def main():
     console.print("[bold]STEP 2:[/bold] Alice creates a document")
     simulate_processing(console, "Creating document...")
 
-    doc = doc_system.create_document(
+    doc = await doc_system.create_document(
         "doc123", "Hello, this is a secret document.", "did:example:alice"
     )
 
@@ -205,14 +254,24 @@ def main():
 
     bob_capability = None
     try:
-        bob_capability = create_capability(
-            controller_did="did:example:alice", invoker_did="did:example:bob",
-            actions=[{"name": "read"}, {"name": "write", "parameters": {"max_size": 1024}}],
-            target_info={"id": f"https://example.com/documents/{doc.id}", "type": "Document"},
-            controller_key=alice_key, expires=datetime.utcnow() + timedelta(days=30)
+        bob_capability = await create_capability(
+            controller_did="did:example:alice",
+            invoker_did="did:example:bob",
+            actions=[
+                {"name": "read"},
+                {"name": "write", "parameters": {"max_size": 1024}},
+            ],
+            target_info={
+                "id": f"https://example.com/documents/{doc.id}",
+                "type": "Document",
+            },
+            controller_key=alice_key,
+            expires=datetime.utcnow() + timedelta(days=30),
         )
         capability_store[bob_capability.id] = bob_capability
-        console.print(f"[green]✓[/green] Capability for Bob created: {bob_capability.id}\n")
+        console.print(
+            f"[green]✓[/green] Capability for Bob created: {bob_capability.id}\n"
+        )
     except ZCAPException as e:
         console.print(f"[red]✗[/red] Failed to create Bob's capability: {e}")
         return
@@ -223,12 +282,17 @@ def main():
 
     if bob_capability:
         try:
-            content = doc_system.read_document(
-                doc.id, bob_capability, bob_key,
-                did_key_store, capability_store, revoked_capabilities,
-                used_invocation_nonces, nonce_timestamps
+            content = await doc_system.read_document(
+                doc.id,
+                bob_capability,
+                bob_key,
+                did_key_store,
+                capability_store,
+                revoked_capabilities,
+                used_invocation_nonces,
+                nonce_timestamps,
             )
-            console.print(f"[green]✓[/green] Bob reads: [italic]\"{content}\"[/italic]")
+            console.print(f'[green]✓[/green] Bob reads: [italic]"{content}"[/italic]')
         except PermissionError as e:
             console.print(f"[red]✗[/red] Bob read failed: {e}")
     console.print()
@@ -240,13 +304,23 @@ def main():
     if bob_capability:
         try:
             new_content = "Hello, Bob has edited this document."
-            doc_system.write_document(
-                doc.id, new_content, bob_capability, bob_key,
-                did_key_store, capability_store, revoked_capabilities,
-                used_invocation_nonces, nonce_timestamps
+            await doc_system.write_document(
+                doc.id,
+                new_content,
+                bob_capability,
+                bob_key,
+                did_key_store,
+                capability_store,
+                revoked_capabilities,
+                used_invocation_nonces,
+                nonce_timestamps,
             )
             console.print("[green]✓[/green] Bob successfully wrote to the document")
-            console.print(Markdown(f"**Updated content:**\n\n> {doc_system.documents[doc.id].content}"))
+            console.print(
+                Markdown(
+                    f"**Updated content:**\n\n> {doc_system.documents[doc.id].content}"
+                )
+            )
         except PermissionError as e:
             console.print(f"[red]✗[/red] Bob write failed: {e}")
     console.print()
@@ -258,14 +332,21 @@ def main():
     charlie_capability = None
     if bob_capability:
         try:
-            charlie_capability = delegate_capability(
-                parent_capability=bob_capability, delegator_key=bob_key, new_invoker_did="did:example:charlie",
-                actions=[{"name": "read"}], expires=datetime.utcnow() + timedelta(days=7),
+            charlie_capability = await delegate_capability(
+                parent_capability=bob_capability,
+                delegator_key=bob_key,
+                new_invoker_did="did:example:charlie",
+                actions=[{"name": "read"}],
+                expires=datetime.utcnow() + timedelta(days=7),
                 caveats=[{"type": "TimeSlot", "start": "09:00", "end": "17:00"}],
-                did_key_store=did_key_store, revoked_capabilities=revoked_capabilities, capability_store=capability_store
+                did_key_store=did_key_store,
+                revoked_capabilities=revoked_capabilities,
+                capability_store=capability_store,
             )
             capability_store[charlie_capability.id] = charlie_capability
-            console.print(f"[green]✓[/green] Capability for Charlie created: {charlie_capability.id}\n")
+            console.print(
+                f"[green]✓[/green] Capability for Charlie created: {charlie_capability.id}\n"
+            )
         except (DelegationError, CapabilityVerificationError, ZCAPException) as e:
             console.print(f"[red]✗[/red] Failed to delegate to Charlie: {e}")
             charlie_capability = None
@@ -275,67 +356,109 @@ def main():
 
     if charlie_capability:
         try:
-            content = doc_system.read_document(
-                doc.id, charlie_capability, charlie_key,
-                did_key_store, capability_store, revoked_capabilities,
-                used_invocation_nonces, nonce_timestamps
+            content = await doc_system.read_document(
+                doc.id,
+                charlie_capability,
+                charlie_key,
+                did_key_store,
+                capability_store,
+                revoked_capabilities,
+                used_invocation_nonces,
+                nonce_timestamps,
             )
-            console.print(f"[green]✓[/green] Charlie reads: [italic]\"{content}\"[/italic] (Assuming current time is within 09:00-17:00)")
+            console.print(
+                f'[green]✓[/green] Charlie reads: [italic]"{content}"[/italic] (Assuming current time is within 09:00-17:00)'
+            )
         except PermissionError as e:
             console.print(f"[red]✗[/red] Charlie read failed: {e}")
     else:
-        console.print("[yellow]![/yellow] Skipping Charlie's read attempt as their capability was not created.")
+        console.print(
+            "[yellow]![/yellow] Skipping Charlie's read attempt as their capability was not created."
+        )
     console.print()
 
-    console.print("[bold]STEP 8:[/bold] Charlie attempts to write to the document (should fail)")
+    console.print(
+        "[bold]STEP 8:[/bold] Charlie attempts to write to the document (should fail)"
+    )
     simulate_processing(console, "Charlie invoking write capability...")
 
     if charlie_capability:
         try:
-            doc_system.write_document(
-                doc.id, "Charlie tries to write.", charlie_capability, charlie_key,
-                did_key_store, capability_store, revoked_capabilities,
-                used_invocation_nonces, nonce_timestamps
+            await doc_system.write_document(
+                doc.id,
+                "Charlie tries to write.",
+                charlie_capability,
+                charlie_key,
+                did_key_store,
+                capability_store,
+                revoked_capabilities,
+                used_invocation_nonces,
+                nonce_timestamps,
             )
-            console.print("[red]✗[/red] Charlie write: [bold red]Successful (UNEXPECTED)[/bold red]")
+            console.print(
+                "[red]✗[/red] Charlie write: [bold red]Successful (UNEXPECTED)[/bold red]"
+            )
         except PermissionError as e:
             console.print(f"[green]✓[/green] Charlie write failed as expected: {e}")
     else:
-        console.print("[yellow]![/yellow] Skipping Charlie's write attempt as their capability was not created.")
+        console.print(
+            "[yellow]![/yellow] Skipping Charlie's write attempt as their capability was not created."
+        )
     console.print()
 
     console.print("[bold]STEP 9:[/bold] Bob revokes Charlie's capability (client-side)")
     if charlie_capability:
-        simulate_processing(console, "Adding Charlie's capability ID to revocation list...")
+        simulate_processing(
+            console, "Adding Charlie's capability ID to revocation list..."
+        )
         revoked_capabilities.add(charlie_capability.id)
-        console.print(f"[yellow]![/yellow] Capability {charlie_capability.id} added to revocation list.")
+        console.print(
+            f"[yellow]![/yellow] Capability {charlie_capability.id} added to revocation list."
+        )
     else:
-        console.print("[yellow]![/yellow] Skipping revocation as Charlie's capability was not created.")
+        console.print(
+            "[yellow]![/yellow] Skipping revocation as Charlie's capability was not created."
+        )
     console.print()
 
-    console.print("[bold]STEP 10:[/bold] Charlie attempts to read again (should fail due to revocation)")
+    console.print(
+        "[bold]STEP 10:[/bold] Charlie attempts to read again (should fail due to revocation)"
+    )
     simulate_processing(console, "Charlie invoking read with revoked capability...")
 
     if charlie_capability:
         try:
-            content = doc_system.read_document(
-                doc.id, charlie_capability, charlie_key,
-                did_key_store, capability_store, revoked_capabilities,
-                used_invocation_nonces, nonce_timestamps
+            content = await doc_system.read_document(
+                doc.id,
+                charlie_capability,
+                charlie_key,
+                did_key_store,
+                capability_store,
+                revoked_capabilities,
+                used_invocation_nonces,
+                nonce_timestamps,
             )
-            console.print(f"[red]✗[/red] Charlie read after revocation: [italic]\"{content}\"[/italic] [bold red](UNEXPECTED)[/bold red]")
+            console.print(
+                f'[red]✗[/red] Charlie read after revocation: [italic]"{content}"[/italic] [bold red](UNEXPECTED)[/bold red]'
+            )
         except PermissionError as e:
-            console.print(f"[green]✓[/green] Charlie read after revocation failed as expected: {e}")
+            console.print(
+                f"[green]✓[/green] Charlie read after revocation failed as expected: {e}"
+            )
     else:
-        console.print("[yellow]![/yellow] Skipping Charlie's read attempt as their capability was not created or already revoked.")
+        console.print(
+            "[yellow]![/yellow] Skipping Charlie's read attempt as their capability was not created or already revoked."
+        )
     console.print()
 
-    console.print(Panel.fit(
-        "[bold green]Document Sharing Demo Completed[/bold green]",
-        border_style="green",
-        padding=(1, 2)
-    ))
+    console.print(
+        Panel.fit(
+            "[bold green]Document Sharing Demo Completed[/bold green]",
+            border_style="green",
+            padding=(1, 2),
+        )
+    )
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

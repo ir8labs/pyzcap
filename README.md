@@ -1,4 +1,4 @@
-# zcap - Python ZCAP-LD Implementation
+# ZCAP-LD - Python Implementation
 
 A pure Python implementation of ZCAP-LD (Authorization Capabilities for Linked Data)
 for decentralized identity and access control. This library provides an implementation
@@ -7,7 +7,6 @@ of capability-based access control with full chain of delegation, using the [ZCA
 > **⚠️ WARNING ⚠️**
 > zcap is currently in early development and is not suitable for production use.
 > The library has not yet undergone an independent security review or audit.
-> Use at your own risk for experimental or research purposes only.
 
 ## Features
 
@@ -39,6 +38,46 @@ of capability-based access control with full chain of delegation, using the [ZCA
 ```bash
 pip install zcap
 ```
+
+## Deviations from the specification
+
+The `zcap` library faithfully implements the core principles of ZCAP-LD as described
+in the specification document. The data structures, cryptographic mechanisms,
+and processes for delegation, invocation, and caveat evaluation are consistent
+with the spec's intent. The recent refactoring towards statelessness further
+emphasizes its role as a library for working with ZCAP-LD objects, leaving
+storage and state to the application, which is a flexible and appropriate approach.
+
+### Signature Types
+
+The specification's examples sometimes use older signature types like Ed25519Signature2018 or RsaSignature2016.
+This library defaults to Ed25519Signature2020 in its models, which is a more recent standard but conceptually the same. 
+
+### Capability Types
+
+The spec's example proof includes a capabilityChain array. The library's Proof
+model doesn't explicitly have this, but the chain is implicitly represented by
+the `parentCapability` links and is traversed during verification. 
+The `verify_capability` function recursively checks this chain.
+
+### Revocation Mechanism
+
+The spec mentions caveats as a mechanism for revocation (e.g., `ValidWhileTrue`).
+The library supports this by allowing evaluate_caveat to check against a revoked_ids set.
+The library's general approach of client-managed revoked_capabilities is a practical
+way to implement the effect of such a caveat.
+
+### Explicit target field
+
+While the spec example for a root capability mentions parentCapability pointing to
+the target, this library (and common ZCAP practice) includes an explicit target field
+within the capability document itself, making it self-contained in describing what it's
+for. This is generally an improvement for clarity.
+
+### Expiration
+
+The spec mentions expiration as a mechanism for revocation (e.g., `ValidUntil`).
+The library supports this by allowing the client to pass an expires datetime to create_capability.
 
 ## Quick Start
 

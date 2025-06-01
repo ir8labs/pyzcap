@@ -110,7 +110,7 @@ def time_based_caveats_example():
     try:
         invoke_capability(cap_valid_until, "read", admin_key, did_key_store, revoked_caps, capability_store, nonces, nonce_ts)
         console.print("[red]![/red] Invocation successful (UNEXPECTED, should be expired)")
-    except InvocationError as e:
+    except (InvocationError, CapabilityVerificationError) as e:
         console.print(f"[green]✓[/green] Invocation failed as expected: {e}")
 
     console.print(f"\n[bold]STEP 7:[/bold] Creating capability valid after: [green]{future_start_time.isoformat()}[/green]")
@@ -288,7 +288,7 @@ def conditional_caveat_example(): # ValidWhileTrue
     try:
         invoke_capability(cap_conditional, "access", admin_key, did_key_store, revoked_caps, capability_store, nonces, nonce_ts)
         console.print("[red]![/red] Invocation (condition FALSE): [bold green]Successful[/bold green] (UNEXPECTED)")
-    except InvocationError as e:
+    except (InvocationError, CapabilityVerificationError) as e:
         console.print(f"[green]✓[/green] Invocation (condition FALSE) failed as expected: {e}")
     console.print("--- Conditional Caveat Example Complete ---\n")
 

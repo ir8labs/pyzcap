@@ -2,7 +2,7 @@
 Test suite for the ZCAP-LD implementation.
 """
 
-import pytest
+import pytest # type: ignore
 from datetime import datetime, timedelta
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from zcap import (

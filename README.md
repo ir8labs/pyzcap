@@ -44,9 +44,7 @@ pip install zcap
 The `zcap` library faithfully implements the core principles of ZCAP-LD as described
 in the specification document. The data structures, cryptographic mechanisms,
 and processes for delegation, invocation, and caveat evaluation are consistent
-with the spec's intent. The recent refactoring towards statelessness further
-emphasizes its role as a library for working with ZCAP-LD objects, leaving
-storage and state to the application, which is a flexible and appropriate approach.
+with the spec's intent.
 
 ### Signature Types
 

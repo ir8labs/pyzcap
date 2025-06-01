@@ -80,81 +80,81 @@ The library supports this by allowing the client to pass an expires datetime to 
 ## Quick Start
 
 ```python
+import asyncio
 from datetime import datetime
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from zcap import (
     create_capability, delegate_capability, invoke_capability, verify_capability,
     Capability, # ZCAP Model
     ZCAPException, # Base ZCAP exception
-    DIDKeyNotFoundError, CapabilityNotFoundError, InvocationError
+    DIDKeyNotFoundError, CapabilityNotFoundError, InvocationError, CapabilityVerificationError
 )
 
-# --- 1. Setup: Keys and Client-Managed Stores ---
-# Generate keys for Alice (controller), Bob (invoker), and Charlie (delegatee)
-alice_key = ed25519.Ed25519PrivateKey.generate()
-bob_key = ed25519.Ed25519PrivateKey.generate()
-charlie_key = ed25519.Ed25519PrivateKey.generate()
+async def quick_start_main():
+    # --- 1. Setup: Keys and Client-Managed Stores ---
+    # Generate keys for Alice (controller), Bob (invoker), and Charlie (delegatee)
+    alice_key = ed25519.Ed25519PrivateKey.generate()
+    bob_key = ed25519.Ed25519PrivateKey.generate()
+    charlie_key = ed25519.Ed25519PrivateKey.generate()
 
-alice_did = "did:example:alice"
-bob_did = "did:example:bob"
-charlie_did = "did:example:charlie"
+    alice_did = "did:example:alice"
+    bob_did = "did:example:bob"
+    charlie_did = "did:example:charlie"
 
-# Create a temporary did_key_store (only for demonstration)
-did_key_store = {
-    alice_did: alice_key.public_key(),
-    bob_did: bob_key.public_key(),
-    charlie_did: charlie_key.public_key(),
-}
-capability_store = {}
-revoked_capabilities = set()
-used_invocation_nonces = set()
-nonce_timestamps = {}
+    # Create a temporary did_key_store (only for demonstration)
+    did_key_store = {
+        alice_did: alice_key.public_key(),
+        bob_did: bob_key.public_key(),
+        charlie_did: charlie_key.public_key(),
+    }
+    capability_store = {}
+    revoked_capabilities = set()
+    used_invocation_nonces = set()
+    nonce_timestamps = {}
 
-# --- 2. Alice creates a capability for Bob ---
-try:
-    # Note: controller_did, invoker_did, target_info are used
-    cap_for_bob = create_capability(
-        controller_did=alice_did,
-        invoker_did=bob_did,
-        actions=[{"name": "read"}],
-        target_info={
-            "id": "https://example.com/resource/123",
-            "type": "Document"
-        },
-        controller_key=alice_key
-    )
-    # Client stores the capability
-    capability_store[cap_for_bob.id] = cap_for_bob
-    print(f"Capability created by Alice for Bob: {cap_for_bob.id}")
+    cap_for_bob = None
+    delegated_to_charlie = None
 
-except ZCAPException as e:
-    print(f"Error creating capability: {e}")
-    # Exit or handle error appropriately
+    # --- 2. Alice creates a capability for Bob ---
+    try:
+        cap_for_bob = await create_capability(
+            controller_did=alice_did,
+            invoker_did=bob_did,
+            actions=[{"name": "read"}],
+            target_info={
+                "id": "https://example.com/resource/123",
+                "type": "Document"
+            },
+            controller_key=alice_key
+        )
+        capability_store[cap_for_bob.id] = cap_for_bob
+        print(f"Capability created by Alice for Bob: {cap_for_bob.id}")
 
-# --- 3. Bob delegates the capability to Charlie ---
-try:
-    if cap_for_bob: # Check if previous step succeeded
-        delegated_to_charlie = delegate_capability(
+    except ZCAPException as e:
+        print(f"Error creating capability: {e}")
+        return
+
+    # --- 3. Bob delegates the capability to Charlie ---
+    try:
+        delegated_to_charlie = await delegate_capability(
             parent_capability=cap_for_bob,
-            delegator_key=bob_key, # Bob (invoker of cap_for_bob) is delegating
+            delegator_key=bob_key,
             new_invoker_did=charlie_did,
-            actions=[{"name": "read"}], # Can be a subset of parent's actions
+            actions=[{"name": "read"}],
             did_key_store=did_key_store,
             capability_store=capability_store,
             revoked_capabilities=revoked_capabilities
         )
-        # Client stores the delegated capability
         capability_store[delegated_to_charlie.id] = delegated_to_charlie
         print(f"Capability delegated by Bob to Charlie: {delegated_to_charlie.id}")
 
-except ZCAPException as e:
-    print(f"Error delegating capability: {e}")
+    except ZCAPException as e:
+        print(f"Error delegating capability: {e}")
+        return
 
-# --- 4. Charlie invokes the delegated capability ---
-try:
-    if 'delegated_to_charlie' in locals() and delegated_to_charlie: # Check if previous step succeeded
-        # Pass all required stores to invoke_capability
-        invocation_proof = invoke_capability(
+    # --- 4. Charlie invokes the delegated capability ---
+    try:
+        invocation_proof = await invoke_capability(
             capability=delegated_to_charlie,
             action_name="read",
             invoker_key=charlie_key,
@@ -163,35 +163,36 @@ try:
             revoked_capabilities=revoked_capabilities,
             used_invocation_nonces=used_invocation_nonces,
             nonce_timestamps=nonce_timestamps
-            # parameters can be added if the action requires them
         )
         print(f"Invocation by Charlie successful! Proof ID: {invocation_proof['id']}")
         # The target system would then typically verify this invocation_proof
-        # using verify_invocation(...)
-except (InvocationError, DIDKeyNotFoundError, CapabilityNotFoundError, ZCAPException) as e:
-    print(f"Error invoking capability: {e}")
+        # using `await verify_invocation(...)`
+    except (InvocationError, DIDKeyNotFoundError, CapabilityNotFoundError, ZCAPException) as e:
+        print(f"Error invoking capability: {e}")
 
-# --- 5. Revoking a capability (client-side) ---
-# To revoke cap_for_bob (and thus implicitly delegated_to_charlie):
-if cap_for_bob:
-    revoked_capabilities.add(cap_for_bob.id)
-    print(f"Capability {cap_for_bob.id} added to revocation list.")
+    # --- 5. Revoking a capability (client-side) ---
+    if cap_for_bob:
+        print(f"\nRevoking capability {cap_for_bob.id} (Alice's capability for Bob).")
+        revoked_capabilities.add(cap_for_bob.id)
+        print(f"Capability {cap_for_bob.id} added to revocation list.")
 
-    # Attempting to use delegated_to_charlie would now fail if verified/invoked
-    # as its parent is in revoked_capabilities.
-    try:
-        if 'delegated_to_charlie' in locals() and delegated_to_charlie:
-            verify_capability(
-                delegated_to_charlie,
-                did_key_store,
-                revoked_capabilities,
-                capability_store
-            )
-            print("Verification of delegated_to_charlie succeeded (UNEXPECTED after parent revocation)")
-    except ZCAPException as e:
-        print(f"Verification of delegated_to_charlie failed as expected: {e}")
+        if delegated_to_charlie:
+            try:
+                print(f"Attempting to verify Charlie's capability ({delegated_to_charlie.id}) after parent revoked...")
+                await verify_capability(
+                    delegated_to_charlie,
+                    did_key_store,
+                    revoked_capabilities,
+                    capability_store
+                )
+                print("Verification of delegated_to_charlie SUCCEEDED (UNEXPECTED after parent revocation)")
+            except CapabilityVerificationError as e:
+                print(f"Verification of delegated_to_charlie failed as expected: {e}")
+            except ZCAPException as e:
+                print(f"Verification of delegated_to_charlie failed with an unexpected ZCAPException: {e}")
 
-```
+if __name__ == "__main__":
+    asyncio.run(quick_start_main())
 
 ## Core Concepts
 

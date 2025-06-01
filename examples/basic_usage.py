@@ -4,6 +4,7 @@ Enhanced demo showcasing the core functionality of the zcap library.
 
 import time
 from datetime import datetime, timedelta
+import asyncio
 
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from rich.console import Console
@@ -41,7 +42,7 @@ def simulate_processing(console, message, duration=1.0):
         time.sleep(duration)
 
 
-def main():
+async def main():
     console = Console()
 
     # Display header
@@ -100,7 +101,7 @@ def main():
     simulate_processing(console, "Creating root capability...", 0.5)
 
     try:
-        root_capability = create_capability(
+        root_capability = await create_capability(
             controller_did="did:example:alice",
             invoker_did="did:example:bob",
             actions=[
@@ -136,7 +137,7 @@ def main():
     simulate_processing(console, "Delegating capability...", 0.5)
 
     try:
-        delegated_capability = delegate_capability(
+        delegated_capability = await delegate_capability(
             parent_capability=root_capability,
             delegator_key=bob_key, # Bob is invoker of root_capability, so he can delegate
             new_invoker_did="did:example:charlie",
@@ -174,7 +175,7 @@ def main():
     simulate_processing(console, "Invoking capability...", 0.5)
     invocation = None
     try:
-        invocation = invoke_capability(
+        invocation = await invoke_capability(
             capability=delegated_capability,
             action_name="read",
             invoker_key=charlie_key,
@@ -207,7 +208,7 @@ def main():
         console.print("[bold]STEP 4:[/bold] Verifying the invocation")
         simulate_processing(console, "Verifying invocation...", 0.5)
         try:
-            verify_invocation(
+            await verify_invocation(
                 invocation_doc=invocation,
                 did_key_store=did_key_store,
                 revoked_capabilities=revoked_capabilities,
@@ -225,7 +226,7 @@ def main():
     console.print("[bold]STEP 5:[/bold] Verifying the delegated capability")
     simulate_processing(console, "Verifying capability chain...", 0.5)
     try:
-        verify_capability(
+        await verify_capability(
             capability=delegated_capability,
             did_key_store=did_key_store,
             revoked_capabilities=revoked_capabilities,
@@ -248,7 +249,7 @@ def main():
     console.print("[bold]STEP 7:[/bold] Charlie attempts to use the revoked capability")
     simulate_processing(console, "Attempting invocation with revoked capability...", 0.5)
     try:
-        invocation_after_revoke = invoke_capability(
+        invocation_after_revoke = await invoke_capability(
             capability=delegated_capability,
             action_name="read",
             invoker_key=charlie_key,
@@ -274,4 +275,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

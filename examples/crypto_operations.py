@@ -8,6 +8,7 @@ This example shows:
 4. Proof chain validation
 """
 
+import asyncio
 import time
 from base64 import b64encode
 from datetime import datetime, timedelta
@@ -30,6 +31,8 @@ from zcap import (
     models,
     verify_capability,
 )
+from zcap.models import Capability, Proof, Controller, Invoker, Action, Target
+from zcap.contexts import SECURITY_V2_CONTEXT, ZCAP_V1_CONTEXT
 
 
 def simulate_processing(console, message, duration=0.5):
@@ -81,7 +84,7 @@ def display_proof(console: Console, proof: models.Proof) -> None:
     console.print(proof_table)
 
 
-def main():
+async def main():
     console = Console()
 
     console.print(Panel.fit(
@@ -115,7 +118,7 @@ def main():
     console.print("[bold]STEP 2:[/bold] Creating root capability (Alice → Bob)")
     simulate_processing(console, "Creating and signing capability...")
     try:
-        root_cap = create_capability(
+        root_cap = await create_capability(
             controller_did="did:example:alice",
             invoker_did="did:example:bob",
             actions=[{"name": "read"}],
@@ -136,7 +139,7 @@ def main():
     simulate_processing(console, "Delegating capability...")
     if root_cap:
         try:
-            delegated_cap = delegate_capability(
+            delegated_cap = await delegate_capability(
                 parent_capability=root_cap,
                 delegator_key=bob_private,
                 new_invoker_did="did:example:charlie",
@@ -160,7 +163,7 @@ def main():
     if root_cap:
         console.print("Verifying root capability...")
         try:
-            verify_capability(root_cap, did_key_store, revoked_capabilities, capability_store)
+            await verify_capability(root_cap, did_key_store, revoked_capabilities, capability_store)
             console.print("[green]✓[/green] Root capability verification: [bold green]Valid[/bold green]")
         except (CapabilityVerificationError, DIDKeyNotFoundError, CapabilityNotFoundError, ZCAPException) as e:
             console.print(f"[red]✗[/red] Root capability verification failed: {e}")
@@ -170,7 +173,7 @@ def main():
     if delegated_cap:
         console.print("Verifying delegated capability...")
         try:
-            verify_capability(delegated_cap, did_key_store, revoked_capabilities, capability_store)
+            await verify_capability(delegated_cap, did_key_store, revoked_capabilities, capability_store)
             console.print("[green]✓[/green] Delegated capability verification: [bold green]Valid[/bold green]")
         except (CapabilityVerificationError, DIDKeyNotFoundError, CapabilityNotFoundError, ZCAPException) as e:
             console.print(f"[red]✗[/red] Delegated capability verification failed: {e}")
@@ -216,4 +219,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

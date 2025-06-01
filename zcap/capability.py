@@ -21,6 +21,7 @@ import base58
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from pyld import jsonld
+import asyncio # Add import for asyncio
 
 from .contexts import SECURITY_V2_CONTEXT, ZCAP_V1_CONTEXT
 from .models import Action, Capability, Controller, Invoker, Proof, Target
@@ -64,7 +65,7 @@ class CapabilityNotFoundError(ZCAPException):
     pass
 
 
-def sign_capability_document(
+async def sign_capability_document(
     capability_doc: Dict[str, Any], private_key: ed25519.Ed25519PrivateKey
 ) -> str:
     """Sign a capability document with an Ed25519 private key."""
@@ -91,6 +92,8 @@ def sign_capability_document(
 
     # Canonicalize the capability document
     try:
+        # jsonld.normalize is synchronous. If it were very slow,
+        # we might consider asyncio.to_thread, but typically it's fast enough.
         normalized = jsonld.normalize(
             capability_doc, {"algorithm": "URDNA2015", "format": "application/n-quads"}
         )
@@ -99,11 +102,12 @@ def sign_capability_document(
 
 
     # Sign the normalized document
+    # private_key.sign is synchronous and CPU-bound.
     signature = private_key.sign(normalized.encode("utf-8"))
     return "z" + base58.b58encode(signature).decode("utf-8")
 
 
-def verify_signature(signature: str, message: str, public_key: ed25519.Ed25519PublicKey):
+async def verify_signature(signature: str, message: str, public_key: ed25519.Ed25519PublicKey):
     """
     Verify a signature. Raises SignatureVerificationError on failure.
     """
@@ -118,6 +122,7 @@ def verify_signature(signature: str, message: str, public_key: ed25519.Ed25519Pu
                 raise SignatureVerificationError(
                     "Signature format is invalid. Expected 'z' prefix for base58 or hex."
                 )
+        # public_key.verify is synchronous and CPU-bound.
         public_key.verify(signature_bytes, message.encode("utf-8"))
     except InvalidSignature:
         raise SignatureVerificationError("Signature is invalid.")
@@ -125,7 +130,7 @@ def verify_signature(signature: str, message: str, public_key: ed25519.Ed25519Pu
         raise SignatureVerificationError(f"Verification error: {e}")
 
 
-def create_capability(
+async def create_capability(
     controller_did: str,
     invoker_did: str,
     actions: List[Dict[str, Any]],
@@ -163,7 +168,7 @@ def create_capability(
     if "proof" in capability_doc:
         del capability_doc["proof"]
 
-    proof_value = sign_capability_document(capability_doc, controller_key)
+    proof_value = await sign_capability_document(capability_doc, controller_key)
 
     capability.proof = Proof(
         verification_method=f"{controller_did}#key-1", # Assuming key-1 convention
@@ -173,7 +178,7 @@ def create_capability(
     return capability
 
 
-def delegate_capability(
+async def delegate_capability(
     parent_capability: Capability,
     delegator_key: ed25519.Ed25519PrivateKey,
     new_invoker_did: str,
@@ -223,7 +228,7 @@ def delegate_capability(
             )
 
     try:
-        verify_capability(parent_capability, did_key_store, revoked_capabilities, capability_store)
+        await verify_capability(parent_capability, did_key_store, revoked_capabilities, capability_store)
     except CapabilityVerificationError as e:
         raise DelegationError(f"Parent capability is invalid: {e}")
 
@@ -260,7 +265,7 @@ def delegate_capability(
     if "proof" in delegated_doc: # Should not happen for a new capability
         del delegated_doc["proof"]
 
-    proof_value = sign_capability_document(delegated_doc, delegator_key)
+    proof_value = await sign_capability_document(delegated_doc, delegator_key)
 
     delegated.proof = Proof(
         verification_method=f"{new_controller_did}#key-1", # Signed by the new controller (parent's invoker)
@@ -364,7 +369,7 @@ def cleanup_expired_nonces(
         nonce_timestamps.pop(nonce, None)
 
 
-def invoke_capability(
+async def invoke_capability(
     capability: Capability,
     action_name: str,
     invoker_key: ed25519.Ed25519PrivateKey,
@@ -404,7 +409,7 @@ def invoke_capability(
     if capability.id in revoked_capabilities:
         raise InvocationError("Cannot invoke: capability is revoked.")
 
-    verify_capability(capability, did_key_store, revoked_capabilities, capability_store) # Raises on failure
+    await verify_capability(capability, did_key_store, revoked_capabilities, capability_store) # Raises on failure
 
     if not any(a.name == action_name for a in capability.actions):
         raise InvocationError(f"Action '{action_name}' not allowed by this capability.")
@@ -459,9 +464,11 @@ def invoke_capability(
     # Proof value is added after signing
     # No, the whole doc including proof structure (sans proofValue) is signed.
 
+    # jsonld.normalize is synchronous
     normalized = jsonld.normalize(
         to_sign_doc, {"algorithm": "URDNA2015", "format": "application/n-quads"}
     )
+    # invoker_key.sign is synchronous
     signature = invoker_key.sign(normalized.encode("utf-8"))
     proof_value = "z" + base58.b58encode(signature).decode("utf-8")
 
@@ -474,7 +481,7 @@ def invoke_capability(
     return invocation_doc
 
 
-def verify_capability(
+async def verify_capability(
     capability: Capability,
     did_key_store: Dict[str, ed25519.Ed25519PublicKey],
     revoked_capabilities: Set[str],
@@ -529,6 +536,7 @@ def verify_capability(
          raise CapabilityVerificationError(f"Proof for {capability.id} is missing proof_value.")
 
 
+    # jsonld.normalize is synchronous
     normalized_doc = jsonld.normalize(
         capability_doc_for_sig, {"algorithm": "URDNA2015", "format": "application/n-quads"}
     )
@@ -549,7 +557,8 @@ def verify_capability(
         raise DIDKeyNotFoundError(f"Public key for DID {signer_did} (controller/signer) not found.")
 
     try:
-        verify_signature(proof_value, normalized_doc, public_key)
+        # verify_signature is now async
+        await verify_signature(proof_value, normalized_doc, public_key)
     except SignatureVerificationError as e:
         raise CapabilityVerificationError(f"Signature verification failed for {capability.id}: {e}")
 
@@ -569,10 +578,10 @@ def verify_capability(
                 f"does not match invoker of parent ({parent_capability.invoker.id})."
             )
 
-        verify_capability(parent_capability, did_key_store, revoked_capabilities, capability_store)
+        await verify_capability(parent_capability, did_key_store, revoked_capabilities, capability_store)
 
 
-def verify_invocation(
+async def verify_invocation(
     invocation_doc: Dict[str, Any],
     did_key_store: Dict[str, ed25519.Ed25519PublicKey],
     revoked_capabilities: Set[str],
@@ -608,7 +617,7 @@ def verify_invocation(
 
     # Verify the capability itself and its chain first
     try:
-        verify_capability(target_capability, did_key_store, revoked_capabilities, capability_store)
+        await verify_capability(target_capability, did_key_store, revoked_capabilities, capability_store)
     except (CapabilityVerificationError, CapabilityNotFoundError) as e:
         raise InvocationVerificationError(f"Underlying capability {capability_id} is invalid: {e}")
 
@@ -675,10 +684,12 @@ def verify_invocation(
     invocation_to_verify["proof"] = proof_copy # Use proof without proofValue for normalization
 
     try:
+        # jsonld.normalize is synchronous
         normalized_invocation = jsonld.normalize(
             invocation_to_verify, {"algorithm": "URDNA2015", "format": "application/n-quads"}
         )
-        verify_signature(proof_value, normalized_invocation, public_key)
+        # verify_signature is now async
+        await verify_signature(proof_value, normalized_invocation, public_key)
     except SignatureVerificationError as e:
         raise InvocationVerificationError(f"Invocation signature verification failed: {e}")
     except Exception as e: # Catch other normalization or unexpected errors

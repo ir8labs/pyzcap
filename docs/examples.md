@@ -15,11 +15,12 @@ Most functions in the library will raise specific exceptions (e.g., `CapabilityV
 ### Creating and Using a Simple Capability
 
 ```python
+import asyncio
 from datetime import datetime
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from zcap import (
-    create_capability, invoke_capability, 
-    Capability, ZCAPException, InvocationError, DIDKeyNotFoundError
+    create_capability, invoke_capability, verify_capability,
+    Capability, ZCAPException, InvocationError, DIDKeyNotFoundError, CapabilityVerificationError
 )
 
 # --- Client-managed stores ---
@@ -30,41 +31,47 @@ used_invocation_nonces = set()
 nonce_timestamps = {}
 # ---
 
-# Generate keys for controller (Alice) and invoker (Bob)
-alice_did = "did:example:alice"
-alice_key = ed25519.Ed25519PrivateKey.generate()
-did_key_store[alice_did] = alice_key.public_key()
+async def basic_usage_example():
+    # Generate keys for controller (Alice) and invoker (Bob)
+    alice_did = "did:example:alice"
+    alice_key = ed25519.Ed25519PrivateKey.generate()
+    did_key_store[alice_did] = alice_key.public_key()
 
-bob_did = "did:example:bob"
-bob_key = ed25519.Ed25519PrivateKey.generate()
-did_key_store[bob_did] = bob_key.public_key()
+    bob_did = "did:example:bob"
+    bob_key = ed25519.Ed25519PrivateKey.generate()
+    did_key_store[bob_did] = bob_key.public_key()
 
-# Alice creates a capability for Bob to read a document
-try:
-    # Note: controller_did and invoker_did are used
-    cap_for_bob = create_capability(
-        controller_did=alice_did,
-        invoker_did=bob_did,
-        actions=[{"name": "read"}],
-        target_info={
-            "id": "https://example.com/documents/123",
-            "type": "Document"
-        },
-        controller_key=alice_key
-    )
-    # Client stores the capability object
-    capability_store[cap_for_bob.id] = cap_for_bob
-    print(f"Capability created: {cap_for_bob.id}")
-
-except ZCAPException as e:
-    print(f"Error creating capability: {e}")
-    # Handle error appropriately
-
-# Bob uses the capability
-if cap_for_bob:
+    cap_for_bob = None
+    # Alice creates a capability for Bob to read a document
     try:
-        # Pass all required stores to invoke_capability
-        invocation_proof = invoke_capability(
+        cap_for_bob = await create_capability(
+            controller_did=alice_did,
+            invoker_did=bob_did,
+            actions=[{"name": "read"}],
+            target_info={
+                "id": "https://example.com/documents/123",
+                "type": "Document"
+            },
+            controller_key=alice_key
+        )
+        capability_store[cap_for_bob.id] = cap_for_bob
+        print(f"Capability created: {cap_for_bob.id}")
+
+    except ZCAPException as e:
+        print(f"Error creating capability: {e}")
+        return
+
+    # Optionally, Bob (or Alice, or a third party) verifies the capability
+    try:
+        await verify_capability(cap_for_bob, did_key_store, revoked_capabilities, capability_store)
+        print(f"Capability {cap_for_bob.id} verified successfully.")
+    except CapabilityVerificationError as e:
+        print(f"Capability {cap_for_bob.id} failed verification: {e}")
+        return
+
+    # Bob uses the capability
+    try:
+        invocation_proof = await invoke_capability(
             capability=cap_for_bob,
             action_name="read",
             invoker_key=bob_key,
@@ -75,21 +82,24 @@ if cap_for_bob:
             nonce_timestamps=nonce_timestamps
         )
         print(f"Invocation successful! Proof ID: {invocation_proof['id']}")
-        # The target system would then verify this invocation_proof
+        # The target system would then verify this invocation_proof using verify_invocation
     except (InvocationError, DIDKeyNotFoundError, ZCAPException) as e:
         print(f"Error invoking capability: {e}")
-```
+
+if __name__ == "__main__":
+    asyncio.run(basic_usage_example())
 
 ## Document Sharing Example
 
 ### Multi-Level Delegation
 
 ```python
+import asyncio
 from datetime import datetime, timedelta
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from zcap import (
-    create_capability, delegate_capability, invoke_capability,
-    Capability, ZCAPException, DelegationError, InvocationError, DIDKeyNotFoundError
+    create_capability, delegate_capability, invoke_capability, verify_capability,
+    Capability, ZCAPException, DelegationError, InvocationError, DIDKeyNotFoundError, CapabilityVerificationError
 )
 
 # --- Client-managed stores (initialize as in Basic Usage) ---
@@ -100,58 +110,75 @@ used_invocation_nonces = set()
 nonce_timestamps = {}
 # ---
 
-# Keys and DIDs (replace with actual key generation and DID management)
-alice_did = "did:example:alice"; alice_key = ed25519.Ed25519PrivateKey.generate(); did_key_store[alice_did] = alice_key.public_key()
-bob_did = "did:example:bob"; bob_key = ed25519.Ed25519PrivateKey.generate(); did_key_store[bob_did] = bob_key.public_key()
-charlie_did = "did:example:charlie"; charlie_key = ed25519.Ed25519PrivateKey.generate(); did_key_store[charlie_did] = charlie_key.public_key()
+async def document_sharing_example():
+    # Keys and DIDs
+    alice_did = "did:example:alice"; alice_key = ed25519.Ed25519PrivateKey.generate(); did_key_store[alice_did] = alice_key.public_key()
+    bob_did = "did:example:bob"; bob_key = ed25519.Ed25519PrivateKey.generate(); did_key_store[bob_did] = bob_key.public_key()
+    charlie_did = "did:example:charlie"; charlie_key = ed25519.Ed25519PrivateKey.generate(); did_key_store[charlie_did] = charlie_key.public_key()
 
-root_capability = None
-delegated_capability_for_charlie = None
+    root_capability = None
+    delegated_capability_for_charlie = None
 
-# Alice creates initial capability for Bob
-try:
-    root_capability = create_capability(
-        controller_did=alice_did,
-        invoker_did=bob_did,
-        actions=[
-            {"name": "read"},
-            {"name": "write"}
-        ],
-        target_info={
-            "id": "https://docs.example.com/shared/123",
-            "type": "Document",
-            "format": "markdown"
-        },
-        controller_key=alice_key,
-        expires=datetime.utcnow() + timedelta(days=30)
-    )
-    capability_store[root_capability.id] = root_capability
-    print(f"Root capability for Bob created: {root_capability.id}")
-except ZCAPException as e:
-    print(f"Error creating root capability: {e}")
-
-# Bob delegates read-only access to Charlie
-if root_capability:
+    # Alice creates initial capability for Bob
     try:
-        delegated_capability_for_charlie = delegate_capability(
+        root_capability = await create_capability(
+            controller_did=alice_did,
+            invoker_did=bob_did,
+            actions=[
+                {"name": "read"},
+                {"name": "write"}
+            ],
+            target_info={
+                "id": "https://docs.example.com/shared/123",
+                "type": "Document",
+                "format": "markdown"
+            },
+            controller_key=alice_key,
+            expires=datetime.utcnow() + timedelta(days=30)
+        )
+        capability_store[root_capability.id] = root_capability
+        print(f"Root capability for Bob created: {root_capability.id}")
+    except ZCAPException as e:
+        print(f"Error creating root capability: {e}")
+        return
+    
+    # Verify root capability before delegation (good practice)
+    try:
+        await verify_capability(root_capability, did_key_store, revoked_capabilities, capability_store)
+        print(f"Root capability {root_capability.id} verified.")
+    except CapabilityVerificationError as e:
+        print(f"Root capability {root_capability.id} invalid: {e}")
+        return
+
+    # Bob delegates read-only access to Charlie
+    try:
+        delegated_capability_for_charlie = await delegate_capability(
             parent_capability=root_capability,
             new_invoker_did=charlie_did,
-            delegator_key=bob_key, # Bob (invoker of root_capability) delegates
-            actions=[{"name": "read"}], # Explicitly restricting actions
+            delegator_key=bob_key, 
+            actions=[{"name": "read"}],
             did_key_store=did_key_store,
             capability_store=capability_store,
             revoked_capabilities=revoked_capabilities,
-            expires=datetime.utcnow() + timedelta(days=7) # Can be shorter than parent
+            expires=datetime.utcnow() + timedelta(days=7)
         )
         capability_store[delegated_capability_for_charlie.id] = delegated_capability_for_charlie
         print(f"Delegated capability for Charlie created: {delegated_capability_for_charlie.id}")
     except (DelegationError, ZCAPException) as e:
         print(f"Error delegating capability: {e}")
-
-# Charlie uses the delegated capability
-if delegated_capability_for_charlie:
+        return
+    
+    # Verify delegated capability
     try:
-        invocation_proof = invoke_capability(
+        await verify_capability(delegated_capability_for_charlie, did_key_store, revoked_capabilities, capability_store)
+        print(f"Delegated capability {delegated_capability_for_charlie.id} verified.")
+    except CapabilityVerificationError as e:
+        print(f"Delegated capability {delegated_capability_for_charlie.id} invalid: {e}")
+        return
+
+    # Charlie uses the delegated capability
+    try:
+        invocation_proof = await invoke_capability(
             capability=delegated_capability_for_charlie,
             action_name="read",
             invoker_key=charlie_key,
@@ -164,56 +191,72 @@ if delegated_capability_for_charlie:
         print(f"Charlie's invocation successful! Proof ID: {invocation_proof['id']}")
     except (InvocationError, ZCAPException) as e:
         print(f"Charlie's invocation failed: {e}")
-```
+
+if __name__ == "__main__":
+    asyncio.run(document_sharing_example())
 
 ## Advanced Usage
 
 ### Using Caveats
 
 ```python
+import asyncio
 from datetime import datetime, timedelta
 from cryptography.hazmat.primitives.asymmetric import ed25519
-from zcap import create_capability, ZCAPException, Capability
+from zcap import create_capability, ZCAPException, Capability, verify_capability, CapabilityVerificationError
 
 # --- Client-managed stores ---
 did_key_store = {}
 capability_store = {}
+revoked_capabilities = set()
 # ... (other stores as needed)
 # ---
 
-alice_did = "did:example:alice"; alice_key = ed25519.Ed25519PrivateKey.generate(); did_key_store[alice_did] = alice_key.public_key()
-bob_did = "did:example:bob"; # Bob doesn't need a key to be an invoker in a capability definition
+async def caveat_example():
+    alice_did = "did:example:alice"; alice_key = ed25519.Ed25519PrivateKey.generate(); did_key_store[alice_did] = alice_key.public_key()
+    bob_did = "did:example:bob"; 
 
-# Create a capability with a time-based caveat (ValidUntil)
-try:
-    capability_with_expiry = create_capability(
-        controller_did=alice_did,
-        invoker_did=bob_did,
-        actions=[{"name": "access"}],
-        target_info={
-            "id": "https://api.example.com/resource/456",
-            "type": "APIEndpoint"
-        },
-        controller_key=alice_key,
-        expires=datetime.utcnow() + timedelta(days=1), # This is one way to set expiry
-        caveats=[{
-            "type": "ValidUntil", # Specific ZCAP-LD caveat type
-            "date": (datetime.utcnow() + timedelta(hours=12)).isoformat() # More restrictive than 'expires'
-        }]
-    )
-    capability_store[capability_with_expiry.id] = capability_with_expiry
-    print(f"Capability with ValidUntil caveat created: {capability_with_expiry.id}")
-    # This capability will be invalid after 12 hours due to the caveat,
-    # or after 1 day due to the main expires field, whichever is sooner.
-except ZCAPException as e:
-    print(f"Error creating capability with caveat: {e}")
-```
+    capability_with_expiry = None
+    # Create a capability with a time-based caveat (ValidUntil)
+    try:
+        capability_with_expiry = await create_capability(
+            controller_did=alice_did,
+            invoker_did=bob_did,
+            actions=[{"name": "access"}],
+            target_info={
+                "id": "https://api.example.com/resource/456",
+                "type": "APIEndpoint"
+            },
+            controller_key=alice_key,
+            expires=datetime.utcnow() + timedelta(days=1),
+            caveats=[{
+                "type": "ValidUntil",
+                "date": (datetime.utcnow() + timedelta(hours=12)).isoformat()
+            }]
+        )
+        capability_store[capability_with_expiry.id] = capability_with_expiry
+        print(f"Capability with ValidUntil caveat created: {capability_with_expiry.id}")
+    except ZCAPException as e:
+        print(f"Error creating capability with caveat: {e}")
+        return
+
+    # Verify the capability with caveat
+    if capability_with_expiry:
+        try:
+            await verify_capability(capability_with_expiry, did_key_store, revoked_capabilities, capability_store)
+            print(f"Capability {capability_with_expiry.id} with caveat verified (should be valid now).")
+        except CapabilityVerificationError as e:
+            print(f"Capability {capability_with_expiry.id} with caveat failed verification: {e}")
+
+if __name__ == "__main__":
+    asyncio.run(caveat_example())
 
 ### Revocation Example
 
 Revocation is managed by the client by maintaining a list/set of revoked capability IDs. The library functions (`verify_capability`, `invoke_capability`, `delegate_capability`) check this set.
 
 ```python
+import asyncio
 from datetime import datetime
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from zcap import (
@@ -224,63 +267,79 @@ from zcap import (
 # --- Client-managed stores ---
 did_key_store = {}
 capability_store = {}
-revoked_capabilities = set() # This set holds revoked IDs
+revoked_capabilities = set()
 used_invocation_nonces = set()
 nonce_timestamps = {}
 # ---
 
-alice_did = "did:example:alice"; alice_key = ed25519.Ed25519PrivateKey.generate(); did_key_store[alice_did] = alice_key.public_key()
-bob_did = "did:example:bob"; bob_key = ed25519.Ed25519PrivateKey.generate(); did_key_store[bob_did] = bob_key.public_key()
+async def revocation_example():
+    alice_did = "did:example:alice"; alice_key = ed25519.Ed25519PrivateKey.generate(); did_key_store[alice_did] = alice_key.public_key()
+    bob_did = "did:example:bob"; bob_key = ed25519.Ed25519PrivateKey.generate(); did_key_store[bob_did] = bob_key.public_key()
 
-# Create a capability
-cap_to_revoke = None
-try:
-    cap_to_revoke = create_capability(
-        controller_did=alice_did,
-        invoker_did=bob_did,
-        actions=[{"name": "access"}],
-        target_info={
-            "id": "https://example.com/resource/789",
-            "type": "Resource"
-        },
-        controller_key=alice_key
-    )
-    capability_store[cap_to_revoke.id] = cap_to_revoke
-    print(f"Capability created: {cap_to_revoke.id}")
-except ZCAPException as e:
-    print(f"Error creating capability: {e}")
+    cap_to_revoke = None
+    # Create a capability
+    try:
+        cap_to_revoke = await create_capability(
+            controller_did=alice_did,
+            invoker_did=bob_did,
+            actions=[{"name": "access"}],
+            target_info={
+                "id": "https://example.com/resource/789",
+                "type": "Resource"
+            },
+            controller_key=alice_key
+        )
+        capability_store[cap_to_revoke.id] = cap_to_revoke
+        print(f"Capability created: {cap_to_revoke.id}")
+    except ZCAPException as e:
+        print(f"Error creating capability: {e}")
+        return
 
-# Later, Alice (or an authorized entity) decides to revoke the capability
-if cap_to_revoke:
+    # Verify it (should be valid)
+    try:
+        await verify_capability(cap_to_revoke, did_key_store, revoked_capabilities, capability_store)
+        print(f"Capability {cap_to_revoke.id} verified (pre-revocation).")
+    except CapabilityVerificationError as e:
+        print(f"Capability {cap_to_revoke.id} failed verification (pre-revocation): {e}")
+        return
+
+    # Bob invokes it (should succeed)
+    try:
+        await invoke_capability(
+            cap_to_revoke, "access", bob_key, did_key_store, 
+            capability_store, revoked_capabilities, 
+            used_invocation_nonces, nonce_timestamps
+        )
+        print(f"Capability {cap_to_revoke.id} invoked successfully (pre-revocation).")
+    except InvocationError as e:
+        print(f"Invocation failed (pre-revocation): {e}")
+
+    # Alice revokes the capability
     print(f"Revoking capability: {cap_to_revoke.id}")
     revoked_capabilities.add(cap_to_revoke.id)
-    print("Capability ID added to revocation list.")
 
-    # Attempt to invoke or verify the revoked capability will now fail
+    # Try to verify again (should fail)
     try:
-        print("Attempting to verify revoked capability...")
-        verify_capability(
-            capability=cap_to_revoke,
-            did_key_store=did_key_store,
-            capability_store=capability_store,
-            revoked_capabilities=revoked_capabilities
-        )
-        print("Verification succeeded (UNEXPECTED for revoked capability)")
+        await verify_capability(cap_to_revoke, did_key_store, revoked_capabilities, capability_store)
+        print(f"Capability {cap_to_revoke.id} verification SUCCEEDED (POST-REVOCATION - UNEXPECTED!)")
     except CapabilityVerificationError as e:
-        print(f"Verification failed as expected: {e}")
-    
+        print(f"Capability {cap_to_revoke.id} verification failed as expected (post-revocation): {e}")
+
+    # Try to invoke again (should fail)
     try:
-        print("Attempting to invoke revoked capability...")
-        invoke_capability(
-            capability=cap_to_revoke, action_name="access", invoker_key=bob_key,
-            did_key_store=did_key_store, capability_store=capability_store,
-            revoked_capabilities=revoked_capabilities, 
-            used_invocation_nonces=used_invocation_nonces, nonce_timestamps=nonce_timestamps
+        await invoke_capability(
+            cap_to_revoke, "access", bob_key, did_key_store, 
+            capability_store, revoked_capabilities, 
+            used_invocation_nonces, nonce_timestamps
         )
-        print("Invocation succeeded (UNEXPECTED for revoked capability)")
-    except InvocationError as e: # Or CapabilityVerificationError if verify fails first
-        print(f"Invocation failed as expected: {e}")
-```
+        print(f"Capability {cap_to_revoke.id} invocation SUCCEEDED (POST-REVOCATION - UNEXPECTED!)")
+    except InvocationError as e: # Should fail, ideally due to verification step within invoke_capability
+        print(f"Invocation of {cap_to_revoke.id} failed as expected (post-revocation): {e}")
+    except CapabilityVerificationError as e: # invoke_capability also does verify_capability
+         print(f"Invocation of {cap_to_revoke.id} failed verification step as expected (post-revocation): {e}")
+
+if __name__ == "__main__":
+    asyncio.run(revocation_example())
 
 ## Cryptographic Operations
 

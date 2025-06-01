@@ -2,6 +2,7 @@
 Examples demonstrating the use of different ZCAP-LD caveat types.
 """
 
+import asyncio
 import time
 from datetime import datetime, timedelta
 
@@ -18,6 +19,11 @@ from zcap.capability import (
     delegate_capability,
     invoke_capability,
     verify_capability,
+    evaluate_caveat,
+    CaveatEvaluationError,
+    Capability,
+    DIDKeyNotFoundError,
+    CapabilityNotFoundError
 )
 
 
@@ -422,10 +428,293 @@ def unknown_and_unevaluatable_caveats_example():
     console.print("--- Unknown & Client-Side Caveats Example Complete ---\n")
 
 
+def print_test_result(test_name, success, details=""):
+    status = "PASSED" if success else "FAILED"
+    color_status = "\033[92m" + status + "\033[0m" if success else "\033[91m" + status + "\033[0m"
+    print(f"Test: {test_name} - {color_status}")
+    if details:
+        print(f"  Details: {details}")
+    print("---")
+
+
+async def run_caveat_evaluation_tests():
+    print("\n=== Testing Direct Caveat Evaluation ===")
+    
+    # ValidUntil
+    try:
+        evaluate_caveat({"type": "ValidUntil", "date": (datetime.utcnow() + timedelta(days=1)).isoformat()})
+        print_test_result("ValidUntil - Active", True)
+    except CaveatEvaluationError as e:
+        print_test_result("ValidUntil - Active", False, e)
+    try:
+        evaluate_caveat({"type": "ValidUntil", "date": (datetime.utcnow() - timedelta(days=1)).isoformat()})
+        print_test_result("ValidUntil - Expired", False, "Exception not raised as expected for expired caveat.")
+    except CaveatEvaluationError:
+        print_test_result("ValidUntil - Expired", True, "Correctly failed for expired caveat.")
+
+    # ValidAfter
+    try:
+        evaluate_caveat({"type": "ValidAfter", "date": (datetime.utcnow() - timedelta(days=1)).isoformat()})
+        print_test_result("ValidAfter - Active", True)
+    except CaveatEvaluationError as e:
+        print_test_result("ValidAfter - Active", False, e)
+    try:
+        evaluate_caveat({"type": "ValidAfter", "date": (datetime.utcnow() + timedelta(days=1)).isoformat()})
+        print_test_result("ValidAfter - Not Yet Active", False, "Exception not raised as expected.")
+    except CaveatEvaluationError:
+        print_test_result("ValidAfter - Not Yet Active", True, "Correctly failed as not yet active.")
+
+    # ValidWhileTrue
+    revoked_ids_for_vwt = {"condition:revoked"}
+    try:
+        evaluate_caveat({"type": "ValidWhileTrue", "conditionId": "condition:active"}, revoked_ids=revoked_ids_for_vwt)
+        print_test_result("ValidWhileTrue - Active", True)
+    except CaveatEvaluationError as e:
+        print_test_result("ValidWhileTrue - Active", False, e)
+    try:
+        evaluate_caveat({"type": "ValidWhileTrue", "conditionId": "condition:revoked"}, revoked_ids=revoked_ids_for_vwt)
+        print_test_result("ValidWhileTrue - Revoked", False, "Exception not raised as expected.")
+    except CaveatEvaluationError:
+        print_test_result("ValidWhileTrue - Revoked", True, "Correctly failed as condition is revoked.")
+
+    # AllowedAction
+    try:
+        evaluate_caveat({"type": "AllowedAction", "actions": ["read", "update"]}, action="read")
+        print_test_result("AllowedAction - Permitted", True)
+    except CaveatEvaluationError as e:
+        print_test_result("AllowedAction - Permitted", False, e)
+    try:
+        evaluate_caveat({"type": "AllowedAction", "actions": ["read"]}, action="update")
+        print_test_result("AllowedAction - Denied", False, "Exception not raised as expected.")
+    except CaveatEvaluationError:
+        print_test_result("AllowedAction - Denied", True, "Correctly failed as action not allowed.")
+    try: # No action context, should pass
+        evaluate_caveat({"type": "AllowedAction", "actions": ["read"]})
+        print_test_result("AllowedAction - No action context", True, "Caveat did not restrict as no action was being taken.")
+    except CaveatEvaluationError as e:
+        print_test_result("AllowedAction - No action context", False, f"Unexpected failure: {e}")
+
+
+    # RequireParameter
+    try:
+        evaluate_caveat({"type": "RequireParameter", "parameter": "format", "value": "json"}, action="export", parameters={"format": "json"})
+        print_test_result("RequireParameter - Satisfied", True)
+    except CaveatEvaluationError as e:
+        print_test_result("RequireParameter - Satisfied", False, e)
+    try:
+        evaluate_caveat({"type": "RequireParameter", "parameter": "format", "value": "json"}, action="export", parameters={"format": "xml"})
+        print_test_result("RequireParameter - Wrong Value", False, "Exception not raised.")
+    except CaveatEvaluationError:
+        print_test_result("RequireParameter - Wrong Value", True, "Correctly failed.")
+    try:
+        evaluate_caveat({"type": "RequireParameter", "parameter": "format", "value": "json"}, action="export", parameters={})
+        print_test_result("RequireParameter - Missing Param", False, "Exception not raised.")
+    except CaveatEvaluationError:
+        print_test_result("RequireParameter - Missing Param", True, "Correctly failed.")
+    try: # No parameter context for action
+        evaluate_caveat({"type": "RequireParameter", "parameter": "format", "value": "json"}, action="export")
+        print_test_result("RequireParameter - No parameter context", False, "Exception not raised.")
+    except CaveatEvaluationError:
+        print_test_result("RequireParameter - No parameter context", True, "Correctly failed.")
+
+    # MaxUses and AllowedNetwork (pass-through by evaluate_caveat)
+    try:
+        evaluate_caveat({"type": "MaxUses", "limit": 10})
+        print_test_result("MaxUses - Pass-through", True)
+    except CaveatEvaluationError as e:
+        print_test_result("MaxUses - Pass-through", False, e)
+    try:
+        evaluate_caveat({"type": "AllowedNetwork", "cidr": "192.168.0.0/24"})
+        print_test_result("AllowedNetwork - Pass-through", True)
+    except CaveatEvaluationError as e:
+        print_test_result("AllowedNetwork - Pass-through", False, e)
+
+    # Unknown caveat type
+    try:
+        evaluate_caveat({"type": "SuperSecureCondition", "level": "max"})
+        print_test_result("Unknown Caveat Type", False, "Exception not raised for unknown type.")
+    except CaveatEvaluationError:
+        print_test_result("Unknown Caveat Type", True, "Correctly failed for unknown type.")
+
+
+async def run_caveats_in_capabilities_tests():
+    print("\n=== Testing Caveats within Capability Operations ===")
+    global capability_store, revoked_capabilities, used_invocation_nonces, nonce_timestamps # Allow modification
+    capability_store = {} # Reset for these tests
+    revoked_capabilities = set()
+    used_invocation_nonces = set()
+    nonce_timestamps = {}
+
+    # 1. Capability with ValidUntil caveat
+    print("\nTest 1: Capability with ValidUntil (active and expired)")
+    active_expiry = datetime.utcnow() + timedelta(days=1)
+    cap_valid_until_active = None
+    try:
+        cap_valid_until_active = await create_capability( # await async call
+            controller_did="did:example:service",
+            invoker_did="did:example:admin",
+            actions=[{"name": "read"}],
+            target_info={"id": "urn:resource:valid_until_active"},
+            controller_key="did:example:service",
+            caveats=[{"type": "ValidUntil", "date": active_expiry.isoformat()}]
+        )
+        capability_store[cap_valid_until_active.id] = cap_valid_until_active
+        await verify_capability(cap_valid_until_active, did_key_store, revoked_capabilities, capability_store) # await async call
+        await invoke_capability(cap_valid_until_active, "read", "did:example:admin", did_key_store, capability_store, revoked_capabilities, used_invocation_nonces, nonce_timestamps) # await async call
+        print_test_result("Cap with ValidUntil (Active) - Verify & Invoke", True)
+    except ZCAPException as e:
+        print_test_result("Cap with ValidUntil (Active) - Verify & Invoke", False, e)
+
+    expired_expiry = datetime.utcnow() - timedelta(days=1)
+    try:
+        cap_valid_until_expired = await create_capability( # await async call
+            controller_did="did:example:service",
+            invoker_did="did:example:admin",
+            actions=[{"name": "read"}],
+            target_info={"id": "urn:resource:valid_until_expired"},
+            controller_key="did:example:service",
+            caveats=[{"type": "ValidUntil", "date": expired_expiry.isoformat()}]
+        )
+        capability_store[cap_valid_until_expired.id] = cap_valid_until_expired
+        await verify_capability(cap_valid_until_expired, did_key_store, revoked_capabilities, capability_store) # await async call
+        print_test_result("Cap with ValidUntil (Expired) - Verification", False, "Verification should fail.")
+    except CapabilityVerificationError:
+        print_test_result("Cap with ValidUntil (Expired) - Verification", True, "Correctly failed verification.")
+    except ZCAPException as e:
+        print_test_result("Cap with ValidUntil (Expired) - Verification", False, f"Unexpected ZCAPException: {e}")
+
+    # 2. Capability with AllowedAction caveat during invocation
+    print("\nTest 2: Capability with AllowedAction during invocation")
+    cap_allowed_action = None
+    try:
+        cap_allowed_action = await create_capability( # await async call
+            controller_did="did:example:service",
+            invoker_did="did:example:admin",
+            actions=[{"name": "read"}, {"name": "write"}], # Capability allows both
+            target_info={"id": "urn:resource:allowed_action_test"},
+            controller_key="did:example:service",
+            caveats=[{"type": "AllowedAction", "actions": ["read"]}] # Caveat only allows "read"
+        )
+        capability_store[cap_allowed_action.id] = cap_allowed_action
+        # Invoke allowed action
+        await invoke_capability(cap_allowed_action, "read", "did:example:admin", did_key_store, capability_store, revoked_capabilities, used_invocation_nonces, nonce_timestamps) # await async call
+        print_test_result("AllowedAction - Invoke Permitted Action", True)
+    except ZCAPException as e:
+        print_test_result("AllowedAction - Invoke Permitted Action", False, e)
+    
+    if cap_allowed_action:
+        try:
+            # Invoke denied action
+            await invoke_capability(cap_allowed_action, "write", "did:example:admin", did_key_store, capability_store, revoked_capabilities, used_invocation_nonces, nonce_timestamps) # await async call
+            print_test_result("AllowedAction - Invoke Denied Action", False, "Invocation should fail due to caveat.")
+        except InvocationError as e:
+            if "Caveat not satisfied" in str(e) or "Invocation failed due to caveat" in str(e):
+                 print_test_result("AllowedAction - Invoke Denied Action", True, "Correctly failed due to caveat.")
+            else:
+                 print_test_result("AllowedAction - Invoke Denied Action", False, f"Failed, but not due to expected caveat error: {e}")
+        except ZCAPException as e:
+            print_test_result("AllowedAction - Invoke Denied Action", False, f"Unexpected ZCAPException: {e}")
+
+    # 3. Delegation with caveats
+    print("\nTest 3: Delegation adding and respecting caveats")
+    parent_cap_for_delegation = None
+    delegated_cap_with_caveats = None
+    try:
+        parent_cap_for_delegation = await create_capability( # await async call
+            controller_did="did:example:service",
+            invoker_did="did:example:admin",
+            actions=[{"name": "read"}, {"name": "admin"}],
+            target_info={"id": "urn:resource:delegation_caveat_test"},
+            controller_key="did:example:service",
+            caveats=[{"type": "ValidUntil", "date": (datetime.utcnow() + timedelta(days=5)).isoformat()}]
+        )
+        capability_store[parent_cap_for_delegation.id] = parent_cap_for_delegation
+
+        delegated_cap_with_caveats = await delegate_capability( # await async call
+            parent_capability=parent_cap_for_delegation,
+            delegator_key="did:example:admin",
+            new_invoker_did="did:example:guest",
+            actions=[{"name": "read"}], # Narrowed action
+            did_key_store=did_key_store,
+            capability_store=capability_store,
+            revoked_capabilities=revoked_capabilities,
+            caveats=[
+                {"type": "ValidAfter", "date": (datetime.utcnow() - timedelta(hours=1)).isoformat()}, # Active
+                {"type": "RequireParameter", "parameter": "user_group", "value": "editors"} 
+            ]
+        )
+        capability_store[delegated_cap_with_caveats.id] = delegated_cap_with_caveats
+        print_test_result("Delegation with Additional Caveats - Creation", True)
+    except ZCAPException as e:
+        print_test_result("Delegation with Additional Caveats - Creation", False, e)
+        return # Stop if delegation failed
+
+    if delegated_cap_with_caveats:
+        # Verify combined caveats during invocation
+        try: # Successful invocation matching all caveats
+            await invoke_capability( # await async call
+                delegated_cap_with_caveats, 
+                "read", 
+                "did:example:guest", 
+                did_key_store, 
+                capability_store, 
+                revoked_capabilities, 
+                used_invocation_nonces, 
+                nonce_timestamps,
+                parameters={"user_group": "editors"}
+            )
+            print_test_result("Delegated Caveats - Invoke Success (Params Met)", True)
+        except ZCAPException as e:
+            print_test_result("Delegated Caveats - Invoke Success (Params Met)", False, e)
+
+        try: # Invocation failing RequireParameter caveat
+            await invoke_capability( # await async call
+                delegated_cap_with_caveats, 
+                "read", 
+                "did:example:guest", 
+                did_key_store, 
+                capability_store, 
+                revoked_capabilities, 
+                used_invocation_nonces, 
+                nonce_timestamps,
+                parameters={"user_group": "viewers"} # Wrong parameter value
+            )
+            print_test_result("Delegated Caveats - Invoke Fail (Param Mismatch)", False, "Invocation should fail.")
+        except InvocationError as e:
+             if "Caveat not satisfied" in str(e) or "Invocation failed due to caveat" in str(e):
+                print_test_result("Delegated Caveats - Invoke Fail (Param Mismatch)", True, "Correctly failed due to RequireParameter caveat.")
+             else:
+                print_test_result("Delegated Caveats - Invoke Fail (Param Mismatch)", False, f"Failed, but not for expected caveat reason: {e}")
+        except ZCAPException as e:
+            print_test_result("Delegated Caveats - Invoke Fail (Param Mismatch)", False, f"Unexpected ZCAPException: {e}")
+        
+        # Test parent's ValidUntil caveat is still enforced on delegated cap
+        # For this, we need to make the parent's caveat expire.
+        # This is tricky without modifying time; let's assume it's tested by verify_capability implicitly.
+        # A more direct test would involve creating a parent that IS expired via its caveat.
+        if parent_cap_for_delegation:
+            original_parent_caveats = parent_cap_for_delegation.caveats
+            parent_cap_for_delegation.caveats = [{"type": "ValidUntil", "date": (datetime.utcnow() - timedelta(days=1)).isoformat()}]
+            capability_store[parent_cap_for_delegation.id] = parent_cap_for_delegation # Update store
+            try:
+                await verify_capability(delegated_cap_with_caveats, did_key_store, revoked_capabilities, capability_store) # await async call
+                print_test_result("Delegated Caveats - Parent Expired (Verification)", False, "Verification should fail due to expired parent caveat.")
+            except CapabilityVerificationError as e:
+                if "Caveat evaluation failed" in str(e) : # Check if it's the caveat on parent
+                    print_test_result("Delegated Caveats - Parent Expired (Verification)", True, "Correctly failed due to expired parent caveat.")
+                else:
+                    print_test_result("Delegated Caveats - Parent Expired (Verification)", False, f"Verification failed, but not for expected parent caveat reason: {e}")     
+            except ZCAPException as e:
+                 print_test_result("Delegated Caveats - Parent Expired (Verification)", False, f"Unexpected ZCAPException: {e}")
+            parent_cap_for_delegation.caveats = original_parent_caveats # Restore
+            capability_store[parent_cap_for_delegation.id] = parent_cap_for_delegation
+
+
+async def main(): # Changed to async def
+    print("--- ZCAP-LD Caveat Examples ---")
+    await run_caveat_evaluation_tests() # await async call
+    await run_caveats_in_capabilities_tests() # await async call
+    print("\n--- Caveat Examples End ---")
+
 if __name__ == "__main__":
-    time_based_caveats_example()
-    action_restriction_caveats_example()
-    parameter_restriction_example()
-    conditional_caveat_example()
-    delegation_chain_caveats_example()
-    unknown_and_unevaluatable_caveats_example()
+    asyncio.run(main()) # Run the async main function

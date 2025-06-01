@@ -9,9 +9,11 @@ This example simulates a document sharing system where:
 5. Bob revokes Charlie's access
 """
 
+import asyncio
 import time
 from datetime import datetime, timedelta
 from typing import Dict, Set
+from uuid import uuid4
 
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from rich.console import Console
@@ -30,6 +32,8 @@ from zcap import (
     create_capability,
     delegate_capability,
     invoke_capability,
+    verify_capability,
+    verify_invocation,
 )
 from zcap.models import Capability
 
@@ -69,12 +73,12 @@ class DocumentSystem:
     def __init__(self):
         self.documents: Dict[str, Document] = {}
 
-    def create_document(self, id: str, content: str, owner: str) -> Document:
+    async def create_document(self, id: str, content: str, owner: str) -> Document:
         doc = Document(id, content, owner)
         self.documents[id] = doc
         return doc
 
-    def read_document(
+    async def read_document(
         self,
         doc_id: str,
         capability_to_invoke: Capability,
@@ -87,16 +91,20 @@ class DocumentSystem:
     ) -> str:
         """Read a document if the capability allows it."""
         try:
-            invoke_capability(
-                capability_to_invoke, "read", invoker_key,
-                did_key_store, revoked_capabilities, capability_store,
-                used_invocation_nonces, nonce_timestamps
+            await verify_capability(capability_to_invoke, did_key_store, revoked_capabilities, capability_store)
+            await verify_invocation(
+                await invoke_capability(
+                    capability_to_invoke, "read", invoker_key,
+                    did_key_store, revoked_capabilities, capability_store,
+                    used_invocation_nonces, nonce_timestamps
+                ),
+                did_key_store, revoked_capabilities, capability_store
             )
             return self.documents[doc_id].read()
         except (InvocationError, CapabilityVerificationError, DIDKeyNotFoundError, CapabilityNotFoundError, ZCAPException) as e:
             raise PermissionError(f"Access denied to read document {doc_id}: {e}")
 
-    def write_document(
+    async def write_document(
         self,
         doc_id: str,
         content: str,
@@ -110,18 +118,22 @@ class DocumentSystem:
     ) -> None:
         """Write to a document if the capability allows it."""
         try:
-            invoke_capability(
-                capability_to_invoke, "write", invoker_key,
-                did_key_store, revoked_capabilities, capability_store,
-                used_invocation_nonces, nonce_timestamps,
-                parameters={"content_length": len(content)}
+            await verify_capability(capability_to_invoke, did_key_store, revoked_capabilities, capability_store)
+            await verify_invocation(
+                await invoke_capability(
+                    capability_to_invoke, "write", invoker_key,
+                    did_key_store, revoked_capabilities, capability_store,
+                    used_invocation_nonces, nonce_timestamps,
+                    parameters={"content_length": len(content)}
+                ),
+                did_key_store, revoked_capabilities, capability_store
             )
             self.documents[doc_id].write(content)
         except (InvocationError, CapabilityVerificationError, DIDKeyNotFoundError, CapabilityNotFoundError, ZCAPException) as e:
             raise PermissionError(f"Access denied to write document {doc_id}: {e}")
 
 
-def main():
+async def main():
     console = Console()
 
     # Display header
@@ -183,7 +195,7 @@ def main():
     console.print("[bold]STEP 2:[/bold] Alice creates a document")
     simulate_processing(console, "Creating document...")
 
-    doc = doc_system.create_document(
+    doc = await doc_system.create_document(
         "doc123", "Hello, this is a secret document.", "did:example:alice"
     )
 
@@ -205,7 +217,7 @@ def main():
 
     bob_capability = None
     try:
-        bob_capability = create_capability(
+        bob_capability = await create_capability(
             controller_did="did:example:alice", invoker_did="did:example:bob",
             actions=[{"name": "read"}, {"name": "write", "parameters": {"max_size": 1024}}],
             target_info={"id": f"https://example.com/documents/{doc.id}", "type": "Document"},
@@ -223,7 +235,7 @@ def main():
 
     if bob_capability:
         try:
-            content = doc_system.read_document(
+            content = await doc_system.read_document(
                 doc.id, bob_capability, bob_key,
                 did_key_store, capability_store, revoked_capabilities,
                 used_invocation_nonces, nonce_timestamps
@@ -240,7 +252,7 @@ def main():
     if bob_capability:
         try:
             new_content = "Hello, Bob has edited this document."
-            doc_system.write_document(
+            await doc_system.write_document(
                 doc.id, new_content, bob_capability, bob_key,
                 did_key_store, capability_store, revoked_capabilities,
                 used_invocation_nonces, nonce_timestamps
@@ -258,7 +270,7 @@ def main():
     charlie_capability = None
     if bob_capability:
         try:
-            charlie_capability = delegate_capability(
+            charlie_capability = await delegate_capability(
                 parent_capability=bob_capability, delegator_key=bob_key, new_invoker_did="did:example:charlie",
                 actions=[{"name": "read"}], expires=datetime.utcnow() + timedelta(days=7),
                 caveats=[{"type": "TimeSlot", "start": "09:00", "end": "17:00"}],
@@ -275,7 +287,7 @@ def main():
 
     if charlie_capability:
         try:
-            content = doc_system.read_document(
+            content = await doc_system.read_document(
                 doc.id, charlie_capability, charlie_key,
                 did_key_store, capability_store, revoked_capabilities,
                 used_invocation_nonces, nonce_timestamps
@@ -292,7 +304,7 @@ def main():
 
     if charlie_capability:
         try:
-            doc_system.write_document(
+            await doc_system.write_document(
                 doc.id, "Charlie tries to write.", charlie_capability, charlie_key,
                 did_key_store, capability_store, revoked_capabilities,
                 used_invocation_nonces, nonce_timestamps
@@ -318,7 +330,7 @@ def main():
 
     if charlie_capability:
         try:
-            content = doc_system.read_document(
+            content = await doc_system.read_document(
                 doc.id, charlie_capability, charlie_key,
                 did_key_store, capability_store, revoked_capabilities,
                 used_invocation_nonces, nonce_timestamps
@@ -338,4 +350,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

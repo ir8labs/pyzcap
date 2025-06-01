@@ -9,7 +9,7 @@ These functions form the primary interface for creating, delegating, invoking, a
 ### `create_capability`
 
 ```python
-def create_capability(
+async def create_capability(
     controller_did: str,
     invoker_did: str,
     actions: List[Dict[str, Any]],
@@ -42,7 +42,7 @@ def create_capability(
 ### `delegate_capability`
 
 ```python
-def delegate_capability(
+async def delegate_capability(
     parent_capability: Capability,
     delegator_key: ed25519.Ed25519PrivateKey,
     new_invoker_did: str,
@@ -84,7 +84,7 @@ def delegate_capability(
 ### `invoke_capability`
 
 ```python
-def invoke_capability(
+async def invoke_capability(
     capability: Capability,
     action_name: str,
     invoker_key: ed25519.Ed25519PrivateKey,
@@ -129,7 +129,7 @@ def invoke_capability(
 ### `verify_capability`
 
 ```python
-def verify_capability(
+async def verify_capability(
     capability: Capability,
     did_key_store: Dict[str, ed25519.Ed25519PublicKey],
     revoked_capabilities: Set[str],
@@ -157,7 +157,7 @@ def verify_capability(
 ### `verify_invocation`
 
 ```python
-def verify_invocation(
+async def verify_invocation(
     invocation_doc: Dict[str, Any],
     did_key_store: Dict[str, ed25519.Ed25519PublicKey],
     revoked_capabilities: Set[str],
@@ -190,7 +190,7 @@ def verify_invocation(
 ### `sign_capability_document`
 
 ```python
-def sign_capability_document(
+async def sign_capability_document(
     capability_doc: Dict[str, Any], 
     private_key: ed25519.Ed25519PrivateKey
 ) -> str:
@@ -213,7 +213,7 @@ def sign_capability_document(
 ### `verify_signature`
 
 ```python
-def verify_signature(
+async def verify_signature(
     signature: str, 
     message: str, 
     public_key: ed25519.Ed25519PublicKey

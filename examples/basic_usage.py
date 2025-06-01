@@ -208,9 +208,9 @@ def main():
         simulate_processing(console, "Verifying invocation...", 0.5)
         try:
             verify_invocation(
-                invocation_doc=invocation, 
-                did_key_store=did_key_store, 
-                revoked_capabilities=revoked_capabilities, 
+                invocation_doc=invocation,
+                did_key_store=did_key_store,
+                revoked_capabilities=revoked_capabilities,
                 capability_store=capability_store
             )
             console.print("[green]✓[/green] Invocation verification: [bold green]Valid[/bold green]")
@@ -226,9 +226,9 @@ def main():
     simulate_processing(console, "Verifying capability chain...", 0.5)
     try:
         verify_capability(
-            capability=delegated_capability, 
-            did_key_store=did_key_store, 
-            revoked_capabilities=revoked_capabilities, 
+            capability=delegated_capability,
+            did_key_store=did_key_store,
+            revoked_capabilities=revoked_capabilities,
             capability_store=capability_store
         )
         console.print("[green]✓[/green] Delegated capability verification: [bold green]Valid[/bold green]")

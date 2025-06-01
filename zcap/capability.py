@@ -73,13 +73,13 @@ def sign_capability_document(
     existing_contexts = capability_doc.get("@context", [])
     if not isinstance(existing_contexts, list):
         existing_contexts = [existing_contexts]
-    
+
     new_contexts = []
     if SECURITY_V2_CONTEXT["@context"] not in existing_contexts:
         new_contexts.append(SECURITY_V2_CONTEXT["@context"])
     if ZCAP_V1_CONTEXT["@context"] not in existing_contexts:
         new_contexts.append(ZCAP_V1_CONTEXT["@context"])
-    
+
     if new_contexts:
         capability_doc["@context"] = existing_contexts + new_contexts
     elif not existing_contexts: # if capability_doc had no @context
@@ -417,7 +417,7 @@ def invoke_capability(
                 evaluate_caveat(caveat, action_name, parameters, revoked_capabilities)
             except CaveatEvaluationError as e:
                 raise InvocationError(f"Invocation failed due to caveat on capability {current_cap_for_caveat_check.id}: {e}")
-        
+
         if current_cap_for_caveat_check.parent_capability:
             parent_cap = capability_store.get(current_cap_for_caveat_check.parent_capability)
             if not parent_cap:

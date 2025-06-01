@@ -75,10 +75,10 @@ class DocumentSystem:
         return doc
 
     def read_document(
-        self, 
-        doc_id: str, 
-        capability_to_invoke: Capability, 
-        invoker_key: ed25519.Ed25519PrivateKey, 
+        self,
+        doc_id: str,
+        capability_to_invoke: Capability,
+        invoker_key: ed25519.Ed25519PrivateKey,
         did_key_store: Dict[str, ed25519.Ed25519PublicKey],
         capability_store: Dict[str, Capability],
         revoked_capabilities: Set[str],
@@ -88,8 +88,8 @@ class DocumentSystem:
         """Read a document if the capability allows it."""
         try:
             invoke_capability(
-                capability_to_invoke, "read", invoker_key, 
-                did_key_store, revoked_capabilities, capability_store, 
+                capability_to_invoke, "read", invoker_key,
+                did_key_store, revoked_capabilities, capability_store,
                 used_invocation_nonces, nonce_timestamps
             )
             return self.documents[doc_id].read()
@@ -97,10 +97,10 @@ class DocumentSystem:
             raise PermissionError(f"Access denied to read document {doc_id}: {e}")
 
     def write_document(
-        self, 
-        doc_id: str, 
-        content: str, 
-        capability_to_invoke: Capability, 
+        self,
+        doc_id: str,
+        content: str,
+        capability_to_invoke: Capability,
         invoker_key: ed25519.Ed25519PrivateKey,
         did_key_store: Dict[str, ed25519.Ed25519PublicKey],
         capability_store: Dict[str, Capability],
@@ -111,9 +111,9 @@ class DocumentSystem:
         """Write to a document if the capability allows it."""
         try:
             invoke_capability(
-                capability_to_invoke, "write", invoker_key, 
-                did_key_store, revoked_capabilities, capability_store, 
-                used_invocation_nonces, nonce_timestamps, 
+                capability_to_invoke, "write", invoker_key,
+                did_key_store, revoked_capabilities, capability_store,
+                used_invocation_nonces, nonce_timestamps,
                 parameters={"content_length": len(content)}
             )
             self.documents[doc_id].write(content)
@@ -224,8 +224,8 @@ def main():
     if bob_capability:
         try:
             content = doc_system.read_document(
-                doc.id, bob_capability, bob_key, 
-                did_key_store, capability_store, revoked_capabilities, 
+                doc.id, bob_capability, bob_key,
+                did_key_store, capability_store, revoked_capabilities,
                 used_invocation_nonces, nonce_timestamps
             )
             console.print(f"[green]✓[/green] Bob reads: [italic]\"{content}\"[/italic]")
@@ -241,8 +241,8 @@ def main():
         try:
             new_content = "Hello, Bob has edited this document."
             doc_system.write_document(
-                doc.id, new_content, bob_capability, bob_key, 
-                did_key_store, capability_store, revoked_capabilities, 
+                doc.id, new_content, bob_capability, bob_key,
+                did_key_store, capability_store, revoked_capabilities,
                 used_invocation_nonces, nonce_timestamps
             )
             console.print("[green]✓[/green] Bob successfully wrote to the document")
@@ -276,8 +276,8 @@ def main():
     if charlie_capability:
         try:
             content = doc_system.read_document(
-                doc.id, charlie_capability, charlie_key, 
-                did_key_store, capability_store, revoked_capabilities, 
+                doc.id, charlie_capability, charlie_key,
+                did_key_store, capability_store, revoked_capabilities,
                 used_invocation_nonces, nonce_timestamps
             )
             console.print(f"[green]✓[/green] Charlie reads: [italic]\"{content}\"[/italic] (Assuming current time is within 09:00-17:00)")
@@ -293,8 +293,8 @@ def main():
     if charlie_capability:
         try:
             doc_system.write_document(
-                doc.id, "Charlie tries to write.", charlie_capability, charlie_key, 
-                did_key_store, capability_store, revoked_capabilities, 
+                doc.id, "Charlie tries to write.", charlie_capability, charlie_key,
+                did_key_store, capability_store, revoked_capabilities,
                 used_invocation_nonces, nonce_timestamps
             )
             console.print("[red]✗[/red] Charlie write: [bold red]Successful (UNEXPECTED)[/bold red]")
@@ -319,7 +319,7 @@ def main():
     if charlie_capability:
         try:
             content = doc_system.read_document(
-                doc.id, charlie_capability, charlie_key, 
+                doc.id, charlie_capability, charlie_key,
                 did_key_store, capability_store, revoked_capabilities,
                 used_invocation_nonces, nonce_timestamps
             )

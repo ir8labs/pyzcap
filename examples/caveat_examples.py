@@ -112,7 +112,7 @@ def time_based_caveats_example():
         console.print("[red]![/red] Invocation successful (UNEXPECTED, should be expired)")
     except InvocationError as e:
         console.print(f"[green]✓[/green] Invocation failed as expected: {e}")
-    
+
     console.print(f"\n[bold]STEP 7:[/bold] Creating capability valid after: [green]{future_start_time.isoformat()}[/green]")
     try:
         cap_valid_after = create_capability(
@@ -162,7 +162,7 @@ def action_restriction_caveats_example():
             parent_capability=root_cap, delegator_key=admin_key, new_invoker_did="did:example:user",
             # Actions are inherited if not specified, caveat will restrict invocation.
             # To explicitly narrow actions at delegation time (good practice):
-            # actions=[{"name": "read"}], 
+            # actions=[{"name": "read"}],
             caveats=[{"type": "AllowedAction", "actions": ["read"]}],
             did_key_store=did_key_store, revoked_capabilities=revoked_caps, capability_store=capability_store
         )
@@ -284,7 +284,7 @@ def conditional_caveat_example(): # ValidWhileTrue
         console.print("[red]![/red] Verification (condition FALSE): [bold green]Valid[/bold green] (UNEXPECTED)")
     except CapabilityVerificationError as e:
         console.print(f"[green]✓[/green] Verification (condition FALSE) failed as expected: {e}")
-    
+
     try:
         invoke_capability(cap_conditional, "access", admin_key, did_key_store, revoked_caps, capability_store, nonces, nonce_ts)
         console.print("[red]![/red] Invocation (condition FALSE): [bold green]Successful[/bold green] (UNEXPECTED)")
@@ -414,7 +414,7 @@ def unknown_and_unevaluatable_caveats_example():
     except (InvocationError, CapabilityVerificationError) as e:
         # The error might be CapabilityVerificationError if verify_capability is called internally first and fails
         console.print(f"[green]✓[/green] Invocation with unknown caveat failed as expected: {e}")
-    
+
     console.print("\nNote: 'AllowedNetwork' type caveats are skipped by the library's evaluate_caveat function ")
     console.print("as they require client-side context (e.g., request IP). The client application is responsible")
     console.print("for evaluating such caveats before or after library calls if they are critical.")

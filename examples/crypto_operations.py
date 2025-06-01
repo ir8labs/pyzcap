@@ -49,7 +49,7 @@ def generate_key_pair(
 ) -> tuple[ed25519.Ed25519PrivateKey, ed25519.Ed25519PublicKey]:
     """Generate an Ed25519 key pair and display the public key."""
     simulate_processing(console, f"Generating {name}'s key pair...")
-    
+
     private_key = ed25519.Ed25519PrivateKey.generate()
     public_key = private_key.public_key()
 
@@ -65,25 +65,25 @@ def display_proof(console: Console, proof: models.Proof) -> None:
     proof_table = Table(title="Proof Details")
     proof_table.add_column("Property", style="cyan")
     proof_table.add_column("Value", style="green")
-    
+
     proof_table.add_row("ID", str(proof.id))
     proof_table.add_row("Type", proof.type)
     proof_table.add_row("Created", proof.created.isoformat() if isinstance(proof.created, datetime) else str(proof.created))
     proof_table.add_row("Verification Method", proof.verification_method)
     proof_table.add_row("Purpose", proof.proof_purpose)
     proof_table.add_row("Value (first 32 chars)", f"{proof.proof_value[:32]}...")
-    
+
     if proof.domain:
         proof_table.add_row("Domain", proof.domain)
     if proof.nonce:
         proof_table.add_row("Nonce", proof.nonce)
-        
+
     console.print(proof_table)
 
 
 def main():
     console = Console()
-    
+
     console.print(Panel.fit(
         "[bold cyan]zcap Cryptographic Operations Demo[/bold cyan]",
         border_style="cyan",
@@ -186,11 +186,11 @@ def main():
     if delegated_cap:
         simulate_processing(console, "Generating JSON-LD representation...")
         json_ld = delegated_cap.to_json_ld()
-        
+
         json_table = Table(title="Delegated Capability JSON-LD")
         json_table.add_column("Property", style="cyan")
         json_table.add_column("Value", style="green")
-        
+
         json_table.add_row("Context", str(json_ld.get("@context")))
         json_table.add_row("ID", str(json_ld.get("id")))
         json_table.add_row("Type", str(json_ld.get("type")))
@@ -203,11 +203,11 @@ def main():
              json_table.add_row("Actions", str([a.get("name") for a in json_ld["action"]]))
         if isinstance(json_ld.get("proof"), dict):
             json_table.add_row("Proof Type", str(json_ld["proof"].get("type")))
-        
+
         console.print(json_table)
     else:
         console.print("[yellow]![/yellow] Skipping JSON-LD representation (delegated capability not available).")
-    
+
     console.print(Panel.fit(
         "[bold green]Crypto Operations Demo Completed[/bold green]",
         border_style="green",

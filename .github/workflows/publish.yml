@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: release
-      url: https://pypi.org/p/pyzcap
+      url: https://pypi.org/p/zcap
     permissions:
       id-token: write
 

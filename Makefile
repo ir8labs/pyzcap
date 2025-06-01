@@ -15,7 +15,7 @@ test:
 	pytest
 
 coverage:
-	pytest --cov=pyzcap --cov-report=xml --cov-report=term
+	pytest --cov=zcap --cov-report=xml --cov-report=term
 
 lint:
 	ruff check .
@@ -24,7 +24,7 @@ format:
 	ruff format .
 
 security:
-	bandit -r pyzcap
+	bandit -r zcap
 
 clean:
 	rm -rf dist/
@@ -42,4 +42,4 @@ build:
 	pdm build
 
 run:
-	python -m pyzcap 
+	python -m zcap 

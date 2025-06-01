@@ -1,5 +1,5 @@
 [project]
-name = "pyzcap"
+name = "zcap"
 version = "0.1.0"
 description = "A pure Python implementation of ZCAP-LD (Authorization Capabilities for Linked Data)"
 authors = [
@@ -23,7 +23,7 @@ build-backend = "pdm.backend"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --cov=pyzcap"
+addopts = "-v --cov=zcap"
 
 [project.optional-dependencies]
 test = [

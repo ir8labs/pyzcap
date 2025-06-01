@@ -5,7 +5,7 @@ Test cases for ZCAP-LD caveat enforcement.
 import unittest
 from datetime import datetime, timedelta
 from cryptography.hazmat.primitives.asymmetric import ed25519
-from pyzcap.capability import (
+from zcap.capability import (
     create_capability,
     delegate_capability,
     invoke_capability,

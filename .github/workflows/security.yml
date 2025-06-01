@@ -23,7 +23,7 @@ jobs:
         pip install bandit
     - name: Run Bandit security scan
       run: |
-        bandit -r pyzcap -f json -o bandit-results.json
+        bandit -r zcap -f json -o bandit-results.json
     - name: Upload scan results
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:

@@ -5,7 +5,7 @@ Test suite for the ZCAP-LD implementation.
 import pytest
 from datetime import datetime, timedelta
 from cryptography.hazmat.primitives.asymmetric import ed25519
-from pyzcap import (
+from zcap import (
     create_capability,
     delegate_capability,
     invoke_capability,

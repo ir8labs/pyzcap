@@ -47,7 +47,7 @@ Capabilities can be revoked through several mechanisms:
 
 ## JSON-LD Context
 
-PyZCAP uses JSON-LD for semantic interoperability:
+zcap uses JSON-LD for semantic interoperability:
 
 ```json
 {

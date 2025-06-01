@@ -5,7 +5,7 @@
 ### Creating and Using a Simple Capability
 
 ```python
-from pyzcap import create_capability, invoke_capability
+from zcap import create_capability, invoke_capability
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 # Generate keys for controller and invoker
@@ -33,7 +33,7 @@ success = invoke_capability(capability, "read", invoker_key)
 ### Multi-Level Delegation
 
 ```python
-from pyzcap import create_capability, delegate_capability, invoke_capability
+from zcap import create_capability, delegate_capability, invoke_capability
 
 # Initial capability (Alice → Bob)
 doc_capability = create_capability(
@@ -96,7 +96,7 @@ capability_with_expiry = create_capability(
 ### Revocation Example
 
 ```python
-from pyzcap import create_capability, revoke_capability
+from zcap import create_capability, revoke_capability
 
 # Create a capability
 capability = create_capability(
@@ -123,7 +123,7 @@ revocation = revoke_capability(
 ### Working with Key Pairs
 
 ```python
-from pyzcap.crypto import generate_key_pair, key_to_did
+from zcap.crypto import generate_key_pair, key_to_did
 
 # Generate a key pair
 private_key, public_key = generate_key_pair()
@@ -144,7 +144,7 @@ capability = create_capability(
 ### Verification Example
 
 ```python
-from pyzcap import verify_capability_chain, verify_proof
+from zcap import verify_capability_chain, verify_proof
 
 # Verify a delegation chain
 chain_valid = verify_capability_chain(delegated_capability)

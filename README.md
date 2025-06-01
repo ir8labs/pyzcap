@@ -1,11 +1,11 @@
-# PyZCAP - Python ZCAP-LD Implementation
+# zcap - Python ZCAP-LD Implementation
 
 A pure Python implementation of ZCAP-LD (Authorization Capabilities for Linked Data)
 for decentralized indentity and access control. This library provides a complete
 implementation of capability-based access control using the [ZCAP-LD specification](https://w3c-ccg.github.io/zcap-spec/).
 
 > **⚠️ WARNING ⚠️**  
-> PyZCAP is currently in early development and is not suitable for production use.
+> zcap is currently in early development and is not suitable for production use.
 > The library has not yet undergone an independent security review or audit.  
 > Use at your own risk for experimental or research purposes only.
 
@@ -35,13 +35,13 @@ implementation of capability-based access control using the [ZCAP-LD specificati
 ## Installation
 
 ```bash
-pip install pyzcap
+pip install zcap
 ```
 
 ## Quick Start
 
 ```python
-from pyzcap import create_capability, delegate_capability, invoke_capability
+from zcap import create_capability, delegate_capability, invoke_capability
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 # Generate keys

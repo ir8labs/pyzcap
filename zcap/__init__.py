@@ -1,5 +1,5 @@
 """
-PyZCAP - Python ZCAP-LD Implementation
+zcap - Python ZCAP-LD Implementation
 
 A pure Python implementation of ZCAP-LD (Authorization Capabilities for Linked Data)
 for decentralized applications.

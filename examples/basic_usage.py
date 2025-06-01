@@ -1,5 +1,5 @@
 """
-Enhanced demo showcasing the core functionality of the PyZCAP library.
+Enhanced demo showcasing the core functionality of the zcap library.
 """
 
 import time
@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from pyzcap import (
+from zcap import (
     create_capability,
     delegate_capability,
     invoke_capability,
@@ -37,7 +37,7 @@ def main():
 
     # Display header
     console.print(Panel.fit(
-        "[bold cyan]PyZCAP Capability-Based Security Demo[/bold cyan]",
+        "[bold cyan]zcap Capability-Based Security Demo[/bold cyan]",
         border_style="cyan",
         padding=(1, 2)
     ))

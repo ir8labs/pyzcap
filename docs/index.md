@@ -1,6 +1,6 @@
-# PyZCAP API Documentation
+# zcap API Documentation
 
-PyZCAP is a pure Python implementation of ZCAP-LD (Authorization Capabilities for Linked Data) for decentralized applications.
+zcap is a pure Python implementation of ZCAP-LD (Authorization Capabilities for Linked Data) for decentralized applications.
 
 ## Table of Contents
 
@@ -11,20 +11,20 @@ PyZCAP is a pure Python implementation of ZCAP-LD (Authorization Capabilities fo
 
 ## Quick Links
 
-- [GitHub Repository](https://github.com/yourusername/pyzcap)
-- [PyPI Package](https://pypi.org/project/pyzcap/)
-- [Issue Tracker](https://github.com/yourusername/pyzcap/issues)
+- [GitHub Repository](https://github.com/yourusername/zcap)
+- [PyPI Package](https://pypi.org/project/zcap/)
+- [Issue Tracker](https://github.com/yourusername/zcap/issues)
 
 ## Installation
 
 ```bash
-pip install pyzcap
+pip install zcap
 ```
 
 ## Basic Usage
 
 ```python
-from pyzcap import create_capability, delegate_capability, invoke_capability
+from zcap import create_capability, delegate_capability, invoke_capability
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 # Generate keys

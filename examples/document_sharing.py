@@ -18,7 +18,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.markdown import Markdown
-from pyzcap import (
+from zcap import (
     create_capability,
     delegate_capability,
     invoke_capability,
@@ -98,7 +98,7 @@ def main():
 
     # Display header
     console.print(Panel.fit(
-        "[bold cyan]PyZCAP Document Sharing Demo[/bold cyan]",
+        "[bold cyan]zcap Document Sharing Demo[/bold cyan]",
         border_style="cyan",
         padding=(1, 2)
     ))

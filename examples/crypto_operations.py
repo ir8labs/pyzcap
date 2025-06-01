@@ -31,8 +31,6 @@ from zcap import (
     models,
     verify_capability,
 )
-from zcap.models import Capability, Proof, Controller, Invoker, Action, Target
-from zcap.contexts import SECURITY_V2_CONTEXT, ZCAP_V1_CONTEXT
 
 
 def simulate_processing(console, message, duration=0.5):
@@ -59,7 +57,9 @@ def generate_key_pair(
     public_bytes = public_key.public_bytes(
         encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw
     )
-    console.print(f"[cyan]{name}[/cyan]'s public key (base64): [green]{b64encode(public_bytes).decode()}[/green]")
+    console.print(
+        f"[cyan]{name}[/cyan]'s public key (base64): [green]{b64encode(public_bytes).decode()}[/green]"
+    )
     return private_key, public_key
 
 
@@ -71,7 +71,12 @@ def display_proof(console: Console, proof: models.Proof) -> None:
 
     proof_table.add_row("ID", str(proof.id))
     proof_table.add_row("Type", proof.type)
-    proof_table.add_row("Created", proof.created.isoformat() if isinstance(proof.created, datetime) else str(proof.created))
+    proof_table.add_row(
+        "Created",
+        proof.created.isoformat()
+        if isinstance(proof.created, datetime)
+        else str(proof.created),
+    )
     proof_table.add_row("Verification Method", proof.verification_method)
     proof_table.add_row("Purpose", proof.proof_purpose)
     proof_table.add_row("Value (first 32 chars)", f"{proof.proof_value[:32]}...")
@@ -87,11 +92,13 @@ def display_proof(console: Console, proof: models.Proof) -> None:
 async def main():
     console = Console()
 
-    console.print(Panel.fit(
-        "[bold cyan]zcap Cryptographic Operations Demo[/bold cyan]",
-        border_style="cyan",
-        padding=(1, 2)
-    ))
+    console.print(
+        Panel.fit(
+            "[bold cyan]zcap Cryptographic Operations Demo[/bold cyan]",
+            border_style="cyan",
+            padding=(1, 2),
+        )
+    )
 
     # Initialize client-side stores
     did_key_store = {}
@@ -147,13 +154,21 @@ async def main():
                 expires=datetime.utcnow() + timedelta(hours=24),
                 did_key_store=did_key_store,
                 revoked_capabilities=revoked_capabilities,
-                capability_store=capability_store
+                capability_store=capability_store,
             )
             capability_store[delegated_cap.id] = delegated_cap
-            console.print(f"[green]✓[/green] Delegated capability created: {delegated_cap.id}")
+            console.print(
+                f"[green]✓[/green] Delegated capability created: {delegated_cap.id}"
+            )
             if delegated_cap.proof:
                 display_proof(console, delegated_cap.proof)
-        except (DelegationError, CapabilityVerificationError, DIDKeyNotFoundError, CapabilityNotFoundError, ZCAPException) as e:
+        except (
+            DelegationError,
+            CapabilityVerificationError,
+            DIDKeyNotFoundError,
+            CapabilityNotFoundError,
+            ZCAPException,
+        ) as e:
             console.print(f"[red]✗[/red] Delegation failed: {e}")
     console.print()
 
@@ -163,29 +178,55 @@ async def main():
     if root_cap:
         console.print("Verifying root capability...")
         try:
-            await verify_capability(root_cap, did_key_store, revoked_capabilities, capability_store)
-            console.print("[green]✓[/green] Root capability verification: [bold green]Valid[/bold green]")
-        except (CapabilityVerificationError, DIDKeyNotFoundError, CapabilityNotFoundError, ZCAPException) as e:
+            await verify_capability(
+                root_cap, did_key_store, revoked_capabilities, capability_store
+            )
+            console.print(
+                "[green]✓[/green] Root capability verification: [bold green]Valid[/bold green]"
+            )
+        except (
+            CapabilityVerificationError,
+            DIDKeyNotFoundError,
+            CapabilityNotFoundError,
+            ZCAPException,
+        ) as e:
             console.print(f"[red]✗[/red] Root capability verification failed: {e}")
     else:
-        console.print("[yellow]![/yellow] Skipping root capability verification (not created).")
+        console.print(
+            "[yellow]![/yellow] Skipping root capability verification (not created)."
+        )
 
     if delegated_cap:
         console.print("Verifying delegated capability...")
         try:
-            await verify_capability(delegated_cap, did_key_store, revoked_capabilities, capability_store)
-            console.print("[green]✓[/green] Delegated capability verification: [bold green]Valid[/bold green]")
-        except (CapabilityVerificationError, DIDKeyNotFoundError, CapabilityNotFoundError, ZCAPException) as e:
+            await verify_capability(
+                delegated_cap, did_key_store, revoked_capabilities, capability_store
+            )
+            console.print(
+                "[green]✓[/green] Delegated capability verification: [bold green]Valid[/bold green]"
+            )
+        except (
+            CapabilityVerificationError,
+            DIDKeyNotFoundError,
+            CapabilityNotFoundError,
+            ZCAPException,
+        ) as e:
             console.print(f"[red]✗[/red] Delegated capability verification failed: {e}")
     else:
-        console.print("[yellow]![/yellow] Skipping delegated capability verification (not created or delegation failed).")
+        console.print(
+            "[yellow]![/yellow] Skipping delegated capability verification (not created or delegation failed)."
+        )
 
     if root_cap and delegated_cap:
         console.print("\n[bold]Capability chain:[/bold]")
         console.print(f"[cyan]Root:[/cyan] {root_cap.id}")
-        console.print(f"[cyan]└── Delegated:[/cyan] {delegated_cap.id} (parent: {delegated_cap.parent_capability})")
+        console.print(
+            f"[cyan]└── Delegated:[/cyan] {delegated_cap.id} (parent: {delegated_cap.parent_capability})"
+        )
 
-    console.print("\n[bold]STEP 5:[/bold] Examining JSON-LD representation of delegated capability")
+    console.print(
+        "\n[bold]STEP 5:[/bold] Examining JSON-LD representation of delegated capability"
+    )
     if delegated_cap:
         simulate_processing(console, "Generating JSON-LD representation...")
         json_ld = delegated_cap.to_json_ld()
@@ -203,19 +244,25 @@ async def main():
             json_table.add_row("Invoker", str(json_ld["invoker"].get("id")))
         json_table.add_row("Parent Capability", str(json_ld.get("parentCapability")))
         if isinstance(json_ld.get("action"), list):
-             json_table.add_row("Actions", str([a.get("name") for a in json_ld["action"]]))
+            json_table.add_row(
+                "Actions", str([a.get("name") for a in json_ld["action"]])
+            )
         if isinstance(json_ld.get("proof"), dict):
             json_table.add_row("Proof Type", str(json_ld["proof"].get("type")))
 
         console.print(json_table)
     else:
-        console.print("[yellow]![/yellow] Skipping JSON-LD representation (delegated capability not available).")
+        console.print(
+            "[yellow]![/yellow] Skipping JSON-LD representation (delegated capability not available)."
+        )
 
-    console.print(Panel.fit(
-        "[bold green]Crypto Operations Demo Completed[/bold green]",
-        border_style="green",
-        padding=(1, 2)
-    ))
+    console.print(
+        Panel.fit(
+            "[bold green]Crypto Operations Demo Completed[/bold green]",
+            border_style="green",
+            padding=(1, 2),
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 [project]
 name = "zcap"
-version = "0.1.0"
+version = "0.2.0"
 description = "A pure Python implementation of ZCAP-LD (Authorization Capabilities for Linked Data)"
 authors = [
     {name = "Luke Hinds", email = "luke@ir8.ai"},

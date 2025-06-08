@@ -19,8 +19,6 @@ from zcap import (
     DIDKeyNotFoundError,
     InvocationError,
     InvocationVerificationError,
-    # Removed: revoke_capability, register_public_key
-    # Added exception imports if needed for specific handling, e.g.:
     ZCAPException,
     create_capability,
     delegate_capability,
@@ -97,6 +95,9 @@ async def main():
     did_key_store["did:example:bob"] = bob_key.public_key()
     did_key_store["did:example:charlie"] = charlie_key.public_key()
     console.print("[green]✓[/green] DID key store populated successfully\n")
+
+    # did_key_store contents
+    console.print(f"DID key store: {did_key_store}")
 
     # Create a root capability for a document
     console.print("[bold]STEP 1:[/bold] Alice creates a root capability")

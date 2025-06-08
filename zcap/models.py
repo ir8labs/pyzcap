@@ -108,37 +108,40 @@ class Capability(BaseModel):
 
     def to_json_ld(self) -> Dict[str, Any]:
         """Convert the capability to a JSON-LD document."""
-        return {
+        doc = {
             "@context": [SECURITY_V2_CONTEXT["@context"], ZCAP_V1_CONTEXT["@context"]],
-            "id": self.id,
+            "id": str(self.id),
             "type": self.type,
             "controller": {
                 "id": self.controller.id,
                 "type": self.controller.type,
-                **(
-                    {"publicKey": self.controller.public_key}
-                    if self.controller.public_key
-                    else {}
-                ),
             },
             "invoker": {
                 "id": self.invoker.id,
                 "type": self.invoker.type,
-                **(
-                    {"publicKey": self.invoker.public_key}
-                    if self.invoker.public_key
-                    else {}
-                ),
             },
             "action": [action.model_dump() for action in self.actions],
             "target": self.target.model_dump(),
-            **({"proof": self.proof.model_dump()} if self.proof else {}),
-            **(
-                {"parentCapability": self.parent_capability}
-                if self.parent_capability
-                else {}
-            ),
             "caveats": self.caveats,
             "created": self.created.isoformat(),
-            **({"expires": self.expires.isoformat()} if self.expires else {}),
         }
+
+        if self.controller.public_key:
+            doc["controller"]["publicKey"] = self.controller.public_key
+        
+        if self.invoker.public_key:
+            doc["invoker"]["publicKey"] = self.invoker.public_key
+
+        if self.proof:
+            proof_dict = self.proof.model_dump()
+            if isinstance(proof_dict.get("created"), datetime):
+                proof_dict["created"] = proof_dict["created"].isoformat()
+            doc["proof"] = proof_dict
+        
+        if self.parent_capability:
+            doc["parentCapability"] = self.parent_capability
+            
+        if self.expires:
+            doc["expires"] = self.expires.isoformat()
+
+        return doc

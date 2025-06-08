@@ -128,7 +128,7 @@ class Capability(BaseModel):
 
         if self.controller.public_key:
             doc["controller"]["publicKey"] = self.controller.public_key
-        
+
         if self.invoker.public_key:
             doc["invoker"]["publicKey"] = self.invoker.public_key
 
@@ -137,10 +137,10 @@ class Capability(BaseModel):
             if isinstance(proof_dict.get("created"), datetime):
                 proof_dict["created"] = proof_dict["created"].isoformat()
             doc["proof"] = proof_dict
-        
+
         if self.parent_capability:
             doc["parentCapability"] = self.parent_capability
-            
+
         if self.expires:
             doc["expires"] = self.expires.isoformat()
 
